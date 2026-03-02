@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/rl-common",
+    "crates/rl-replay-harvester",
+    "crates/rl-replay2json",
+]
+resolver = "3"
