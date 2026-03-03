@@ -12,6 +12,7 @@ fi
 
 cross build ${PROFILE_FLAG} \
   --target "${TARGET}" \
+  -p rl-common \
   -p rl-replay-harvester \
   -p rl-replay2json
 
@@ -22,5 +23,6 @@ else
 fi
 
 echo "built artifacts:"
+echo "  target/${TARGET}/${PROFILE_DIR}/rl-common.exe"
 echo "  target/${TARGET}/${PROFILE_DIR}/rl-replay-harvester.exe"
 echo "  target/${TARGET}/${PROFILE_DIR}/rl-replay2json.exe"

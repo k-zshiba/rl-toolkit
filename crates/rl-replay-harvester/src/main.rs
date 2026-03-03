@@ -13,8 +13,10 @@ use std::time::Duration;
 
 const API_BASE: &str = "https://ballchasing.com/api";
 const API_KEY_ENV: &str = "BALLCHASING_API_KEY";
-const REQUEST_SLEEP_ENV: &str = "BALLCHASING_REQUEST_SLEEP_MS";
-const DEFAULT_REQUEST_SLEEP_MS: u64 = 1000;
+const REQUEST_INTERVAL_SECONDS_ENV: &str = "BALLCHASING_REQUEST_INTERVAL_SECONDS";
+const LEGACY_REQUEST_SLEEP_MS_ENV: &str = "BALLCHASING_REQUEST_SLEEP_MS";
+const MIN_REQUEST_INTERVAL_SECONDS: u64 = 2;
+const DEFAULT_REQUEST_INTERVAL_SECONDS: u64 = 2;
 
 #[derive(Debug, Parser)]
 #[command(name = "rl-replay-harvester")]
@@ -52,7 +54,7 @@ fn main() -> Result<()> {
     let api_key = env::var(API_KEY_ENV)
         .with_context(|| format!("{API_KEY_ENV} environment variable is required"))?;
     let player_slug = slugify_player_name(&args.player);
-    let request_sleep = request_sleep_duration();
+    let request_interval = request_interval_duration();
     let client = build_client()?;
 
     let mut next_url: Option<String> = None;
@@ -69,7 +71,7 @@ fn main() -> Result<()> {
             &api_key,
             &args.player,
             next_url.as_deref(),
-            request_sleep,
+            request_interval,
         )
         .with_context(|| format!("failed to fetch replay list page {page_number}"))?;
 
@@ -103,7 +105,7 @@ fn main() -> Result<()> {
                 continue;
             }
 
-            match download_replay_file(&client, &api_key, &replay.id, request_sleep) {
+            match download_replay_file(&client, &api_key, &replay.id, request_interval) {
                 Ok(payload) => {
                     if let Err(err) = fs::write(&target_path, payload) {
                         failed += 1;
@@ -152,10 +154,10 @@ fn fetch_replay_page(
     api_key: &str,
     player: &str,
     next_url: Option<&str>,
-    request_sleep: Duration,
+    request_interval: Duration,
 ) -> Result<ReplayListResponse> {
     let response = if let Some(url) = next_url {
-        send(client.get(url), api_key, request_sleep)?
+        send(client.get(url), api_key, request_interval)?
     } else {
         send(
             client.get(format!("{API_BASE}/replays")).query(&[
@@ -165,7 +167,7 @@ fn fetch_replay_page(
                 ("count", "200"),
             ]),
             api_key,
-            request_sleep,
+            request_interval,
         )?
     };
 
@@ -178,12 +180,12 @@ fn download_replay_file(
     client: &Client,
     api_key: &str,
     replay_id: &str,
-    request_sleep: Duration,
+    request_interval: Duration,
 ) -> Result<Vec<u8>> {
     let response = send(
         client.get(format!("{API_BASE}/replays/{replay_id}/file")),
         api_key,
-        request_sleep,
+        request_interval,
     )
     .with_context(|| format!("request failed for replay file {replay_id}"))?;
 
@@ -196,34 +198,64 @@ fn download_replay_file(
 fn send(
     request: reqwest::blocking::RequestBuilder,
     api_key: &str,
-    request_sleep: Duration,
+    request_interval: Duration,
 ) -> Result<Response> {
     let response = request
         .header(AUTHORIZATION, api_key)
         .send()
         .context("HTTP request failed")?;
 
-    if !request_sleep.is_zero() {
-        thread::sleep(request_sleep);
-    }
+    thread::sleep(request_interval);
 
     response
         .error_for_status()
         .context("unexpected HTTP status from ballchasing API")
 }
 
-fn request_sleep_duration() -> Duration {
-    match env::var(REQUEST_SLEEP_ENV) {
-        Ok(value) => match value.parse::<u64>() {
-            Ok(ms) => Duration::from_millis(ms),
-            Err(_) => {
-                eprintln!(
-                    "invalid {REQUEST_SLEEP_ENV}='{value}', fallback to {DEFAULT_REQUEST_SLEEP_MS}ms"
-                );
-                Duration::from_millis(DEFAULT_REQUEST_SLEEP_MS)
-            }
+fn request_interval_duration() -> Duration {
+    match env::var(REQUEST_INTERVAL_SECONDS_ENV) {
+        Ok(value) => parse_request_interval_seconds(&value, REQUEST_INTERVAL_SECONDS_ENV),
+        Err(_) => match env::var(LEGACY_REQUEST_SLEEP_MS_ENV) {
+            Ok(value) => parse_legacy_sleep_ms(&value),
+            Err(_) => Duration::from_secs(DEFAULT_REQUEST_INTERVAL_SECONDS),
         },
-        Err(_) => Duration::from_millis(DEFAULT_REQUEST_SLEEP_MS),
+    }
+}
+
+fn parse_request_interval_seconds(raw: &str, env_name: &str) -> Duration {
+    match raw.parse::<u64>() {
+        Ok(seconds) if seconds >= MIN_REQUEST_INTERVAL_SECONDS => Duration::from_secs(seconds),
+        Ok(seconds) => {
+            eprintln!(
+                "{env_name}={seconds} is too small, using minimum {MIN_REQUEST_INTERVAL_SECONDS}s"
+            );
+            Duration::from_secs(MIN_REQUEST_INTERVAL_SECONDS)
+        }
+        Err(_) => {
+            eprintln!(
+                "invalid {env_name}='{raw}', fallback to {DEFAULT_REQUEST_INTERVAL_SECONDS}s"
+            );
+            Duration::from_secs(DEFAULT_REQUEST_INTERVAL_SECONDS)
+        }
+    }
+}
+
+fn parse_legacy_sleep_ms(raw: &str) -> Duration {
+    match raw.parse::<u64>() {
+        Ok(ms) => {
+            let seconds = ms.div_ceil(1000);
+            let clamped = seconds.max(MIN_REQUEST_INTERVAL_SECONDS);
+            eprintln!(
+                "{LEGACY_REQUEST_SLEEP_MS_ENV} is deprecated; use {REQUEST_INTERVAL_SECONDS_ENV}. resolved interval={clamped}s"
+            );
+            Duration::from_secs(clamped)
+        }
+        Err(_) => {
+            eprintln!(
+                "invalid {LEGACY_REQUEST_SLEEP_MS_ENV}='{raw}', fallback to {DEFAULT_REQUEST_INTERVAL_SECONDS}s"
+            );
+            Duration::from_secs(DEFAULT_REQUEST_INTERVAL_SECONDS)
+        }
     }
 }
 
