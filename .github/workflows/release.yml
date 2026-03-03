@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows Binaries
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release -p rl-common -p rl-replay-harvester -p rl-replay2json
+
+      - name: Package artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item target\release\rl-common.exe dist\
+          Copy-Item target\release\rl-replay-harvester.exe dist\
+          Copy-Item target\release\rl-replay2json.exe dist\
+          Compress-Archive -Path dist\rl-common.exe -DestinationPath dist\rl-common-windows-x86_64.zip -Force
+          Compress-Archive -Path dist\rl-replay-harvester.exe -DestinationPath dist\rl-replay-harvester-windows-x86_64.zip -Force
+          Compress-Archive -Path dist\rl-replay2json.exe -DestinationPath dist\rl-replay2json-windows-x86_64.zip -Force
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: dist/*.zip
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries
+          path: dist
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
