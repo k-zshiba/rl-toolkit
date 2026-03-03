@@ -2,13 +2,27 @@ use anyhow::{Context, Result, anyhow};
 use boxcars::{NetworkParse, ParserBuilder};
 use chrono::{DateTime, Utc};
 use clap::Parser;
+use reqwest::blocking::Client;
+use semver::Version;
+use serde::Deserialize;
 use std::collections::HashSet;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
+const UPDATE_CHECK_ENV: &str = "RL_TOOLKIT_UPDATE_CHECK";
+const RELEASE_API_URL_ENV: &str = "RL_TOOLKIT_RELEASE_API_URL";
+const DEFAULT_RELEASE_API_URL: &str =
+    "https://api.github.com/repos/k-zshiba/rl-toolkit/releases/latest";
+const TAGS_API_URL_ENV: &str = "RL_TOOLKIT_TAGS_API_URL";
+const DEFAULT_TAGS_API_URL: &str =
+    "https://api.github.com/repos/k-zshiba/rl-toolkit/tags?per_page=1";
+const UPDATE_GITHUB_TOKEN_ENV: &str = "RL_TOOLKIT_GITHUB_TOKEN";
+const GITHUB_TOKEN_ENV: &str = "GITHUB_TOKEN";
+const UPDATE_TIMEOUT_SECONDS: u64 = 5;
 
 #[derive(Debug, Parser)]
 #[command(name = "rl-replay2json")]
@@ -40,6 +54,8 @@ enum ConvertStatus {
 }
 
 fn main() -> Result<()> {
+    emit_update_check_status("rl-replay2json");
+
     let args = Args::parse();
     let input_dir = fs::canonicalize(&args.input_dir).with_context(|| {
         format!(
@@ -261,6 +277,149 @@ fn parse_replay(data: &[u8]) -> Result<boxcars::Replay> {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct LatestRelease {
+    tag_name: String,
+    html_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RepoTag {
+    name: String,
+}
+
+#[derive(Debug)]
+struct LatestVersionInfo {
+    tag_name: String,
+    version: Version,
+    page_url: Option<String>,
+}
+
+fn emit_update_check_status(binary_name: &str) {
+    if !update_check_enabled() {
+        return;
+    }
+
+    match fetch_update_status(binary_name) {
+        Ok(message) => eprintln!("{message}"),
+        Err(err) => eprintln!("[update] {binary_name}: check failed: {err}"),
+    }
+}
+
+fn update_check_enabled() -> bool {
+    match env::var(UPDATE_CHECK_ENV) {
+        Ok(value) => !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "off"),
+        Err(_) => true,
+    }
+}
+
+fn fetch_update_status(binary_name: &str) -> Result<String> {
+    let release_api_url =
+        env::var(RELEASE_API_URL_ENV).unwrap_or_else(|_| DEFAULT_RELEASE_API_URL.to_string());
+    let tags_api_url =
+        env::var(TAGS_API_URL_ENV).unwrap_or_else(|_| DEFAULT_TAGS_API_URL.to_string());
+    let current_version = Version::parse(env!("CARGO_PKG_VERSION"))
+        .with_context(|| format!("invalid current version: {}", env!("CARGO_PKG_VERSION")))?;
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(UPDATE_TIMEOUT_SECONDS))
+        .user_agent(format!("{binary_name}/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("failed to build update-check HTTP client")?;
+
+    let latest = fetch_latest_version_info(&client, &release_api_url, &tags_api_url)?;
+
+    if latest.version > current_version {
+        let release_page = latest.page_url.unwrap_or(release_api_url);
+        Ok(format!(
+            "[update] {binary_name}: update available {} -> {} ({release_page})",
+            current_version, latest.tag_name
+        ))
+    } else {
+        Ok(format!(
+            "[update] {binary_name}: up to date (current v{current_version}, latest {})",
+            latest.tag_name
+        ))
+    }
+}
+
+fn parse_version_tag(raw: &str) -> Option<Version> {
+    let trimmed = raw.trim_start_matches(['v', 'V']);
+    Version::parse(trimmed).ok()
+}
+
+fn fetch_latest_version_info(
+    client: &Client,
+    release_api_url: &str,
+    tags_api_url: &str,
+) -> Result<LatestVersionInfo> {
+    let release_response = github_get(client, release_api_url)
+        .send()
+        .context("failed to request latest release")?;
+
+    if release_response.status() == reqwest::StatusCode::NOT_FOUND {
+        return fetch_latest_from_tags(client, tags_api_url)
+            .context("latest release not found; fallback to tags failed");
+    }
+
+    let release_status = release_response.status();
+    let release = release_response
+        .error_for_status()
+        .with_context(|| format!("release API returned unexpected status: {release_status}"))?
+        .json::<LatestRelease>()
+        .context("failed to decode latest release response")?;
+
+    let version = parse_version_tag(&release.tag_name)
+        .ok_or_else(|| anyhow!("invalid release tag format: {}", release.tag_name))?;
+
+    Ok(LatestVersionInfo {
+        tag_name: release.tag_name,
+        version,
+        page_url: release.html_url,
+    })
+}
+
+fn fetch_latest_from_tags(client: &Client, tags_api_url: &str) -> Result<LatestVersionInfo> {
+    let tags_response = github_get(client, tags_api_url)
+        .send()
+        .context("failed to request latest tag")?;
+
+    let tags_status = tags_response.status();
+    let tags = tags_response
+        .error_for_status()
+        .with_context(|| format!("tags API returned unexpected status: {tags_status}"))?
+        .json::<Vec<RepoTag>>()
+        .context("failed to decode tags response")?;
+
+    let latest_tag = tags
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("no releases or tags found in repository"))?;
+    let version = parse_version_tag(&latest_tag.name)
+        .ok_or_else(|| anyhow!("invalid tag format: {}", latest_tag.name))?;
+
+    Ok(LatestVersionInfo {
+        tag_name: latest_tag.name,
+        version,
+        page_url: Some(tags_api_url.to_string()),
+    })
+}
+
+fn github_get(client: &Client, url: &str) -> reqwest::blocking::RequestBuilder {
+    let mut request = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json");
+
+    if let Ok(token) = env::var(UPDATE_GITHUB_TOKEN_ENV).or_else(|_| env::var(GITHUB_TOKEN_ENV)) {
+        let token = token.trim();
+        if !token.is_empty() {
+            request = request.bearer_auth(token);
+        }
+    }
+
+    request
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +446,11 @@ mod tests {
         let replay = Path::new("/tmp/DEADBEEF.replay");
         let replay_id = replay_id_from_path(replay).expect("replay id");
         assert_eq!(replay_id, "DEADBEEF");
+    }
+
+    #[test]
+    fn parse_version_tag_handles_v_prefix() {
+        let version = parse_version_tag("v1.2.3").expect("version");
+        assert_eq!(version, Version::new(1, 2, 3));
     }
 }

@@ -2,6 +2,8 @@
 
 This toolkit includes utility tools for rocket league below
 
+Japanese guide: [README.ja.md](./README.ja.md)
+
 ## rl-common (GUI)
 
 A desktop GUI application that provides both:
@@ -13,6 +15,8 @@ A desktop GUI application that provides both:
 ```bash
 cargo run -p rl-common
 ```
+
+Generated binary name: `rl-toolkit` (`rl-toolkit.exe` on Windows)
 
 Notes:
 - Windows is supported for this GUI app.
@@ -90,6 +94,29 @@ Notes:
 - output filename is the original replay filename with extension changed from `.replay` to `.json`
 - the process keeps running and polls every 10 seconds
 - only newly detected replay files are converted during runtime
+
+## Version Update Check
+
+All binaries check for updates on startup by querying GitHub Releases latest endpoint:
+
+- `rl-toolkit` (GUI)
+- `rl-replay-harvester`
+- `rl-replay2json`
+
+Environment variables:
+
+- `RL_TOOLKIT_UPDATE_CHECK=off` (or `0` / `false`) to disable update checks
+- `RL_TOOLKIT_RELEASE_API_URL=<url>` to override release API endpoint
+- `RL_TOOLKIT_TAGS_API_URL=<url>` to override tags API endpoint for fallback
+- `RL_TOOLKIT_GITHUB_TOKEN=<token>` (or `GITHUB_TOKEN`) for authenticated GitHub API requests
+
+Default endpoint:
+
+`https://api.github.com/repos/k-zshiba/rl-toolkit/releases/latest`
+
+Fallback endpoint when no latest release exists (HTTP 404):
+
+`https://api.github.com/repos/k-zshiba/rl-toolkit/tags?per_page=1`
 
 ## Windows Build
 

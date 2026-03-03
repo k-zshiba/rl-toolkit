@@ -29,10 +29,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist -Force | Out-Null
-          Copy-Item target\release\rl-common.exe dist\
+          Copy-Item target\release\rl-toolkit.exe dist\
           Copy-Item target\release\rl-replay-harvester.exe dist\
           Copy-Item target\release\rl-replay2json.exe dist\
-          Compress-Archive -Path dist\rl-common.exe -DestinationPath dist\rl-common-windows-x86_64.zip -Force
+          Compress-Archive -Path dist\rl-toolkit.exe -DestinationPath dist\rl-toolkit-windows-x86_64.zip -Force
           Compress-Archive -Path dist\rl-replay-harvester.exe -DestinationPath dist\rl-replay-harvester-windows-x86_64.zip -Force
           Compress-Archive -Path dist\rl-replay2json.exe -DestinationPath dist\rl-replay2json-windows-x86_64.zip -Force
 
