@@ -8,7 +8,10 @@ use serde::Deserialize;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
+use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
@@ -17,9 +20,6 @@ const UPDATE_CHECK_ENV: &str = "RL_TOOLKIT_UPDATE_CHECK";
 const RELEASE_API_URL_ENV: &str = "RL_TOOLKIT_RELEASE_API_URL";
 const DEFAULT_RELEASE_API_URL: &str =
     "https://api.github.com/repos/k-zshiba/rl-toolkit/releases/latest";
-const TAGS_API_URL_ENV: &str = "RL_TOOLKIT_TAGS_API_URL";
-const DEFAULT_TAGS_API_URL: &str =
-    "https://api.github.com/repos/k-zshiba/rl-toolkit/tags?per_page=1";
 const UPDATE_GITHUB_TOKEN_ENV: &str = "RL_TOOLKIT_GITHUB_TOKEN";
 const GITHUB_TOKEN_ENV: &str = "GITHUB_TOKEN";
 const UPDATE_TIMEOUT_SECONDS: u64 = 5;
@@ -54,7 +54,7 @@ enum ConvertStatus {
 }
 
 fn main() -> Result<()> {
-    emit_update_check_status("rl-replay2json");
+    maybe_self_update_cli("rl-replay2json");
 
     let args = Args::parse();
     let input_dir = fs::canonicalize(&args.input_dir).with_context(|| {
@@ -281,27 +281,50 @@ fn parse_replay(data: &[u8]) -> Result<boxcars::Replay> {
 struct LatestRelease {
     tag_name: String,
     html_url: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RepoTag {
-    name: String,
+    assets: Vec<ReleaseAsset>,
 }
 
 #[derive(Debug)]
-struct LatestVersionInfo {
+struct UpdateCandidate {
     tag_name: String,
     version: Version,
-    page_url: Option<String>,
+    page_url: String,
+    download_url: String,
 }
 
-fn emit_update_check_status(binary_name: &str) {
+#[derive(Debug, Deserialize)]
+struct ReleaseAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+fn maybe_self_update_cli(binary_name: &str) {
     if !update_check_enabled() {
         return;
     }
 
-    match fetch_update_status(binary_name) {
-        Ok(message) => eprintln!("{message}"),
+    match find_update_candidate(binary_name) {
+        Ok(Some(candidate)) => {
+            eprintln!(
+                "[update] {binary_name}: update available {} -> {} ({})",
+                env!("CARGO_PKG_VERSION"),
+                candidate.version,
+                candidate.page_url
+            );
+
+            if confirm_update_from_stdin(binary_name, &candidate.tag_name) {
+                match download_and_replace_executable(binary_name, &candidate.download_url) {
+                    Ok(message) => eprintln!("[update] {binary_name}: {message}"),
+                    Err(err) => eprintln!("[update] {binary_name}: update failed: {err}"),
+                }
+            } else {
+                eprintln!("[update] {binary_name}: skipped by user");
+            }
+        }
+        Ok(None) => eprintln!(
+            "[update] {binary_name}: up to date (current v{})",
+            env!("CARGO_PKG_VERSION")
+        ),
         Err(err) => eprintln!("[update] {binary_name}: check failed: {err}"),
     }
 }
@@ -313,11 +336,9 @@ fn update_check_enabled() -> bool {
     }
 }
 
-fn fetch_update_status(binary_name: &str) -> Result<String> {
+fn find_update_candidate(binary_name: &str) -> Result<Option<UpdateCandidate>> {
     let release_api_url =
         env::var(RELEASE_API_URL_ENV).unwrap_or_else(|_| DEFAULT_RELEASE_API_URL.to_string());
-    let tags_api_url =
-        env::var(TAGS_API_URL_ENV).unwrap_or_else(|_| DEFAULT_TAGS_API_URL.to_string());
     let current_version = Version::parse(env!("CARGO_PKG_VERSION"))
         .with_context(|| format!("invalid current version: {}", env!("CARGO_PKG_VERSION")))?;
 
@@ -327,20 +348,46 @@ fn fetch_update_status(binary_name: &str) -> Result<String> {
         .build()
         .context("failed to build update-check HTTP client")?;
 
-    let latest = fetch_latest_version_info(&client, &release_api_url, &tags_api_url)?;
+    let response = github_api_get(&client, &release_api_url)
+        .send()
+        .context("failed to request latest release")?;
 
-    if latest.version > current_version {
-        let release_page = latest.page_url.unwrap_or(release_api_url);
-        Ok(format!(
-            "[update] {binary_name}: update available {} -> {} ({release_page})",
-            current_version, latest.tag_name
-        ))
-    } else {
-        Ok(format!(
-            "[update] {binary_name}: up to date (current v{current_version}, latest {})",
-            latest.tag_name
-        ))
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
     }
+
+    let status = response.status();
+    let release = response
+        .error_for_status()
+        .with_context(|| format!("release API returned unexpected status: {status}"))?
+        .json::<LatestRelease>()
+        .context("failed to decode latest release response")?;
+
+    let latest_version = parse_version_tag(&release.tag_name)
+        .ok_or_else(|| anyhow!("invalid release tag format: {}", release.tag_name))?;
+    if latest_version <= current_version {
+        return Ok(None);
+    }
+
+    let expected_asset = expected_asset_name(binary_name);
+    let asset = release
+        .assets
+        .into_iter()
+        .find(|asset| asset.name == expected_asset)
+        .ok_or_else(|| {
+            anyhow!(
+                "release {} does not contain asset {}",
+                release.tag_name,
+                expected_asset
+            )
+        })?;
+
+    Ok(Some(UpdateCandidate {
+        tag_name: release.tag_name,
+        version: latest_version,
+        page_url: release.html_url.unwrap_or(release_api_url),
+        download_url: asset.browser_download_url,
+    }))
 }
 
 fn parse_version_tag(raw: &str) -> Option<Version> {
@@ -348,68 +395,135 @@ fn parse_version_tag(raw: &str) -> Option<Version> {
     Version::parse(trimmed).ok()
 }
 
-fn fetch_latest_version_info(
-    client: &Client,
-    release_api_url: &str,
-    tags_api_url: &str,
-) -> Result<LatestVersionInfo> {
-    let release_response = github_get(client, release_api_url)
-        .send()
-        .context("failed to request latest release")?;
+#[cfg(target_os = "windows")]
+fn expected_asset_name(binary_name: &str) -> String {
+    format!("{binary_name}.exe")
+}
 
-    if release_response.status() == reqwest::StatusCode::NOT_FOUND {
-        return fetch_latest_from_tags(client, tags_api_url)
-            .context("latest release not found; fallback to tags failed");
+#[cfg(not(target_os = "windows"))]
+fn expected_asset_name(binary_name: &str) -> String {
+    binary_name.to_string()
+}
+
+fn confirm_update_from_stdin(binary_name: &str, tag_name: &str) -> bool {
+    eprint!("[update] {binary_name}: install {tag_name} now? [y/N]: ");
+    let _ = io::stderr().flush();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return false;
     }
 
-    let release_status = release_response.status();
-    let release = release_response
-        .error_for_status()
-        .with_context(|| format!("release API returned unexpected status: {release_status}"))?
-        .json::<LatestRelease>()
-        .context("failed to decode latest release response")?;
-
-    let version = parse_version_tag(&release.tag_name)
-        .ok_or_else(|| anyhow!("invalid release tag format: {}", release.tag_name))?;
-
-    Ok(LatestVersionInfo {
-        tag_name: release.tag_name,
-        version,
-        page_url: release.html_url,
-    })
+    matches!(input.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
-fn fetch_latest_from_tags(client: &Client, tags_api_url: &str) -> Result<LatestVersionInfo> {
-    let tags_response = github_get(client, tags_api_url)
+fn download_and_replace_executable(binary_name: &str, download_url: &str) -> Result<String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(UPDATE_TIMEOUT_SECONDS))
+        .user_agent(format!("{binary_name}/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("failed to build updater HTTP client")?;
+
+    let response = github_download_get(&client, download_url)
         .send()
-        .context("failed to request latest tag")?;
-
-    let tags_status = tags_response.status();
-    let tags = tags_response
+        .context("failed to download update asset")?;
+    let status = response.status();
+    let bytes = response
         .error_for_status()
-        .with_context(|| format!("tags API returned unexpected status: {tags_status}"))?
-        .json::<Vec<RepoTag>>()
-        .context("failed to decode tags response")?;
+        .with_context(|| format!("asset download failed with status: {status}"))?
+        .bytes()
+        .context("failed to read downloaded bytes")?;
 
-    let latest_tag = tags
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow!("no releases or tags found in repository"))?;
-    let version = parse_version_tag(&latest_tag.name)
-        .ok_or_else(|| anyhow!("invalid tag format: {}", latest_tag.name))?;
+    let current_exe = env::current_exe().context("failed to resolve current executable path")?;
+    let staged_path = staged_update_path(&current_exe);
+    if staged_path.exists() {
+        let _ = fs::remove_file(&staged_path);
+    }
 
-    Ok(LatestVersionInfo {
-        tag_name: latest_tag.name,
-        version,
-        page_url: Some(tags_api_url.to_string()),
-    })
+    fs::write(&staged_path, &bytes)
+        .with_context(|| format!("failed to write staged update {}", staged_path.display()))?;
+    set_executable_permission(&staged_path)?;
+
+    replace_executable(&current_exe, &staged_path)
 }
 
-fn github_get(client: &Client, url: &str) -> reqwest::blocking::RequestBuilder {
-    let mut request = client
+fn staged_update_path(current_exe: &Path) -> PathBuf {
+    let mut path = current_exe.as_os_str().to_owned();
+    path.push(".new");
+    PathBuf::from(path)
+}
+
+#[cfg(unix)]
+fn set_executable_permission(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut perms = fs::metadata(path)
+        .with_context(|| format!("failed to read metadata for {}", path.display()))?
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms)
+        .with_context(|| format!("failed to set executable permission on {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_executable_permission(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> {
+    fs::rename(staged_path, current_exe).with_context(|| {
+        format!(
+            "failed to replace executable {} with {}",
+            current_exe.display(),
+            staged_path.display()
+        )
+    })?;
+    Ok(format!(
+        "updated successfully. restart to use the new version ({})",
+        current_exe.display()
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> {
+    let mut script_name = current_exe.as_os_str().to_owned();
+    script_name.push(".update.cmd");
+    let script_path = PathBuf::from(script_name);
+
+    let script = format!(
+        "@echo off\r\n:retry\r\nmove /Y \"{}\" \"{}\" >nul 2>nul\r\nif errorlevel 1 (\r\n  timeout /T 1 /NOBREAK >nul\r\n  goto retry\r\n)\r\ndel \"%~f0\"\r\n",
+        staged_path.display(),
+        current_exe.display()
+    );
+
+    fs::write(&script_path, script)
+        .with_context(|| format!("failed to create updater script {}", script_path.display()))?;
+
+    Command::new("cmd")
+        .arg("/C")
+        .arg(&script_path)
+        .spawn()
+        .with_context(|| format!("failed to launch updater script {}", script_path.display()))?;
+
+    Ok("update staged. restart this app to complete replacement".to_string())
+}
+
+fn github_api_get(client: &Client, url: &str) -> reqwest::blocking::RequestBuilder {
+    let request = client
         .get(url)
         .header(reqwest::header::ACCEPT, "application/vnd.github+json");
+    apply_github_auth(request)
+}
 
+fn github_download_get(client: &Client, url: &str) -> reqwest::blocking::RequestBuilder {
+    apply_github_auth(client.get(url))
+}
+
+fn apply_github_auth(
+    mut request: reqwest::blocking::RequestBuilder,
+) -> reqwest::blocking::RequestBuilder {
     if let Ok(token) = env::var(UPDATE_GITHUB_TOKEN_ENV).or_else(|_| env::var(GITHUB_TOKEN_ENV)) {
         let token = token.trim();
         if !token.is_empty() {

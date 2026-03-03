@@ -95,28 +95,33 @@ Notes:
 - the process keeps running and polls every 10 seconds
 - only newly detected replay files are converted during runtime
 
-## Version Update Check
+## Version Update Check and Self-Update
 
-All binaries check for updates on startup by querying GitHub Releases latest endpoint:
+All binaries check on startup whether a newer version exists on GitHub Releases:
 
 - `rl-toolkit` (GUI)
 - `rl-replay-harvester`
 - `rl-replay2json`
 
+If a newer version is found, the app asks the user whether to update.
+
+- CLI tools: prompt on startup (`[y/N]`)
+- GUI tool: Yes/No dialog on startup
+
+If user agrees:
+
+- Linux: executable is replaced immediately
+- Windows: update is staged and applied after process exit (restart required)
+
 Environment variables:
 
 - `RL_TOOLKIT_UPDATE_CHECK=off` (or `0` / `false`) to disable update checks
 - `RL_TOOLKIT_RELEASE_API_URL=<url>` to override release API endpoint
-- `RL_TOOLKIT_TAGS_API_URL=<url>` to override tags API endpoint for fallback
 - `RL_TOOLKIT_GITHUB_TOKEN=<token>` (or `GITHUB_TOKEN`) for authenticated GitHub API requests
 
 Default endpoint:
 
 `https://api.github.com/repos/k-zshiba/rl-toolkit/releases/latest`
-
-Fallback endpoint when no latest release exists (HTTP 404):
-
-`https://api.github.com/repos/k-zshiba/rl-toolkit/tags?per_page=1`
 
 ## Windows Build
 

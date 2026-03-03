@@ -80,7 +80,7 @@ json/{yyyy-mm-dd}/{replay_filename}.json
 - 入力ディレクトリは再帰的に探索
 - 10 秒ごとに新規ファイルを検知して継続変換
 
-## バージョン更新チェック
+## バージョン更新チェックと自己更新
 
 以下のバイナリは起動時に GitHub Releases の latest を参照して、更新可能かを確認します。
 
@@ -88,20 +88,25 @@ json/{yyyy-mm-dd}/{replay_filename}.json
 - `rl-replay-harvester`
 - `rl-replay2json`
 
+新しいバージョンがある場合は、更新するかユーザーに確認します。
+
+- CLI: 起動時に `[y/N]` プロンプト表示
+- GUI: 起動時に Yes/No ダイアログ表示
+
+ユーザーが更新を許可した場合:
+
+- Linux: 実行ファイルをその場で置き換え
+- Windows: 更新をステージングし、プロセス終了後に置き換え（再起動で反映）
+
 利用できる環境変数:
 
 - `RL_TOOLKIT_UPDATE_CHECK=off`（または `0` / `false`）で更新チェック無効化
 - `RL_TOOLKIT_RELEASE_API_URL=<url>` で参照先 API を上書き
-- `RL_TOOLKIT_TAGS_API_URL=<url>` でフォールバック用 tags API を上書き
 - `RL_TOOLKIT_GITHUB_TOKEN=<token>`（または `GITHUB_TOKEN`）で GitHub API 認証
 
 デフォルト参照先:
 
 `https://api.github.com/repos/k-zshiba/rl-toolkit/releases/latest`
-
-`latest release` が未作成（HTTP 404）の場合のフォールバック参照先:
-
-`https://api.github.com/repos/k-zshiba/rl-toolkit/tags?per_page=1`
 
 ## Windows 向けビルド
 
