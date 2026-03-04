@@ -72,15 +72,57 @@ jobs:
           name: windows-binaries
           path: dist/*.exe
 
+  build-macos:
+    name: Build macOS Binaries (${{ matrix.suffix }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            suffix: macos-x86_64
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            suffix: macos-aarch64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p rl-common -p rl-replay-harvester -p rl-replay2json
+
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/rl-toolkit dist/rl-toolkit-${{ matrix.suffix }}
+          cp target/${{ matrix.target }}/release/rl-replay-harvester dist/rl-replay-harvester-${{ matrix.suffix }}
+          cp target/${{ matrix.target }}/release/rl-replay2json dist/rl-replay2json-${{ matrix.suffix }}
+          chmod +x dist/rl-toolkit-${{ matrix.suffix }} dist/rl-replay-harvester-${{ matrix.suffix }} dist/rl-replay2json-${{ matrix.suffix }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-binaries-${{ matrix.suffix }}
+          path: dist/*-${{ matrix.suffix }}
+
   publish-release:
     name: Publish GitHub Release
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: "*-binaries"
+          pattern: "*binaries*"
           merge-multiple: true
           path: dist
 
@@ -91,4 +133,5 @@ jobs:
             dist/rl-toolkit
             dist/rl-replay-harvester
             dist/rl-replay2json
+            dist/*-macos-*
             dist/*.exe
