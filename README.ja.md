@@ -14,6 +14,7 @@ cargo run -p rl-common
 
 ### 主な機能
 
+- 言語切替: English / 日本語
 - Replay Harvester タブ
   - Ballchasing API を使って指定プレイヤーのリプレイをダウンロード
   - `Output Dir` は `Browse...` ボタンでフォルダ選択可能
@@ -27,6 +28,7 @@ cargo run -p rl-common
 
 - Windows で動作します。
 - Linux では `WINIT_UNIX_BACKEND=x11` をデフォルト設定し、Wayland の `XKBNotFound` 問題を回避します。
+- 日本語が文字化けする場合は `RL_TOOLKIT_FONT_PATH` に日本語対応フォント（`.ttf`/`.otf`/`.ttc`）のパスを指定してください。
 
 ## rl-replay-harvester (CLI)
 
@@ -125,9 +127,3 @@ cross build --release \
   -p rl-replay-harvester \
   -p rl-replay2json
 ```
-
-### 生成物
-
-- `target/x86_64-pc-windows-gnu/release/rl-toolkit.exe`
-- `target/x86_64-pc-windows-gnu/release/rl-replay-harvester.exe`
-- `target/x86_64-pc-windows-gnu/release/rl-replay2json.exe`

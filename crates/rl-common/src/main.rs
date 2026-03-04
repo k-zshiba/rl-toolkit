@@ -28,6 +28,7 @@ const DEFAULT_RELEASE_API_URL: &str =
 const UPDATE_GITHUB_TOKEN_ENV: &str = "RL_TOOLKIT_GITHUB_TOKEN";
 const GITHUB_TOKEN_ENV: &str = "GITHUB_TOKEN";
 const UPDATE_TIMEOUT_SECONDS: u64 = 5;
+const FONT_PATH_ENV: &str = "RL_TOOLKIT_FONT_PATH";
 
 fn main() -> eframe::Result<()> {
     configure_platform_env();
@@ -36,7 +37,10 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "RL Toolkit GUI",
         options,
-        Box::new(|_cc| Ok(Box::new(RlGuiApp::default()))),
+        Box::new(|cc| {
+            configure_localized_fonts(&cc.egui_ctx);
+            Ok(Box::new(RlGuiApp::default()))
+        }),
     )
 }
 
@@ -53,10 +57,104 @@ fn configure_platform_env() {
     }
 }
 
+fn configure_localized_fonts(ctx: &egui::Context) {
+    let mut candidates = Vec::new();
+
+    if let Ok(path) = env::var(FONT_PATH_ENV) {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            candidates.push(PathBuf::from(trimmed));
+        }
+    }
+
+    candidates.extend(default_font_candidates());
+
+    for font_path in candidates {
+        if !font_path.is_file() {
+            continue;
+        }
+
+        let Ok(bytes) = fs::read(&font_path) else {
+            continue;
+        };
+
+        let mut fonts = egui::FontDefinitions::default();
+        let font_name = "rl_localized".to_string();
+        fonts
+            .font_data
+            .insert(font_name.clone(), egui::FontData::from_owned(bytes).into());
+
+        if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+            family.insert(0, font_name.clone());
+        }
+        if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+            family.push(font_name.clone());
+        }
+
+        ctx.set_fonts(fonts);
+        eprintln!("[font] loaded localized font: {}", font_path.display());
+        return;
+    }
+
+    eprintln!(
+        "[font] no Japanese-capable font detected. set {FONT_PATH_ENV} to a .ttf/.otf/.ttc path"
+    );
+}
+
+fn default_font_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        candidates.push(PathBuf::from(r"C:\Windows\Fonts\YuGothM.ttc"));
+        candidates.push(PathBuf::from(r"C:\Windows\Fonts\YuGothR.ttc"));
+        candidates.push(PathBuf::from(r"C:\Windows\Fonts\meiryo.ttc"));
+        candidates.push(PathBuf::from(r"C:\Windows\Fonts\msgothic.ttc"));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        candidates.push(PathBuf::from(
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        ));
+        candidates.push(PathBuf::from(
+            "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf",
+        ));
+        candidates.push(PathBuf::from(
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        ));
+        candidates.push(PathBuf::from(
+            "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf",
+        ));
+        candidates.push(PathBuf::from(
+            "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        candidates.push(PathBuf::from(
+            "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        ));
+        candidates.push(PathBuf::from(
+            "/System/Library/Fonts/ヒラギノ丸ゴ ProN W4.ttc",
+        ));
+        candidates.push(PathBuf::from("/System/Library/Fonts/Hiragino Sans GB.ttc"));
+    }
+
+    candidates
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Harvester,
     Replay2Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Language {
+    English,
+    Japanese,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +212,7 @@ enum WorkerEvent {
 }
 
 struct RlGuiApp {
+    language: Language,
     tab: Tab,
     harvester: HarvesterSettings,
     replay2json: Replay2JsonSettings,
@@ -125,9 +224,11 @@ struct RlGuiApp {
 
 impl Default for RlGuiApp {
     fn default() -> Self {
-        let logs = run_gui_update_flow("rl-toolkit");
+        let language = detect_initial_language();
+        let logs = run_gui_update_flow("rl-toolkit", language);
 
         Self {
+            language,
             tab: Tab::Harvester,
             harvester: HarvesterSettings::default(),
             replay2json: Replay2JsonSettings::default(),
@@ -139,7 +240,29 @@ impl Default for RlGuiApp {
     }
 }
 
+fn detect_initial_language() -> Language {
+    let locale = env::var("LC_ALL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| env::var("LANG").ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if locale.starts_with("ja") {
+        Language::Japanese
+    } else {
+        Language::English
+    }
+}
+
 impl RlGuiApp {
+    fn tr<'a>(&self, en: &'a str, ja: &'a str) -> &'a str {
+        match self.language {
+            Language::English => en,
+            Language::Japanese => ja,
+        }
+    }
+
     fn start_task(&mut self, task: TaskKind) {
         if self.running {
             return;
@@ -149,7 +272,10 @@ impl RlGuiApp {
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_worker = Arc::clone(&cancel);
 
-        self.logs.push("starting task...".to_string());
+        self.logs.push(
+            self.tr("starting task...", "タスクを開始しました...")
+                .to_string(),
+        );
         self.running = true;
         self.worker_cancel = Some(cancel);
         self.worker_rx = Some(rx);
@@ -183,8 +309,12 @@ impl RlGuiApp {
                     WorkerEvent::Log(line) => self.logs.push(line),
                     WorkerEvent::Finished(result) => {
                         match result {
-                            Ok(()) => self.logs.push("task finished".to_string()),
-                            Err(err) => self.logs.push(format!("task failed: {err}")),
+                            Ok(()) => self
+                                .logs
+                                .push(self.tr("task finished", "タスクが完了しました").to_string()),
+                            Err(err) => self
+                                .logs
+                                .push(format!("{}: {err}", self.tr("task failed", "タスク失敗"))),
                         }
                         done = true;
                     }
@@ -200,34 +330,76 @@ impl RlGuiApp {
     }
 
     fn ui_header(&mut self, ui: &mut egui::Ui) {
+        let tab_harvester = self.tr("Replay Harvester", "リプレイ収集");
+        let tab_replay2json = self.tr("Replay2JSON", "リプレイJSON変換");
+        let label_language = self.tr("Language", "言語");
+        let button_stop = self.tr("Stop Task", "タスク停止");
+        let label_idle = self.tr("Idle", "待機中");
+        let previous_language = self.language;
+
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.tab, Tab::Harvester, "Replay Harvester");
-            ui.selectable_value(&mut self.tab, Tab::Replay2Json, "Replay2JSON");
+            ui.selectable_value(&mut self.tab, Tab::Harvester, tab_harvester);
+            ui.selectable_value(&mut self.tab, Tab::Replay2Json, tab_replay2json);
+
+            ui.separator();
+            ui.label(label_language);
+            egui::ComboBox::from_id_salt("language_selector")
+                .selected_text(match self.language {
+                    Language::English => "English",
+                    Language::Japanese => "日本語",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.language, Language::English, "English");
+                    ui.selectable_value(&mut self.language, Language::Japanese, "日本語");
+                });
 
             ui.separator();
             if self.running {
-                if ui.button("Stop Task").clicked() {
+                if ui.button(button_stop).clicked() {
                     self.stop_task();
                 }
             } else {
-                ui.label("Idle");
+                ui.label(label_idle);
             }
         });
+
+        if self.language != previous_language {
+            relocalize_logs(&mut self.logs, previous_language, self.language);
+        }
     }
 
     fn ui_harvester(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Replay Harvester");
-        ui.label("Download replays for one player via ballchasing API.");
+        let heading = self.tr("Replay Harvester", "リプレイ収集");
+        let desc = self.tr(
+            "Download replays for one player via ballchasing API.",
+            "ballchasing API で1人の選手のリプレイをダウンロードします。",
+        );
+        let label_api_key = self.tr("API Key", "APIキー");
+        let label_player = self.tr("Player", "選手名");
+        let label_output_dir = self.tr("Output Dir", "出力先ディレクトリ");
+        let label_browse = self.tr("Browse...", "参照...");
+        let label_saved_layout = self.tr("Saved files layout:", "保存レイアウト:");
+        let label_max_pages = self.tr("Max Pages", "最大ページ数");
+        let label_request_interval = self.tr("Request Interval (sec)", "リクエスト間隔(秒)");
+        let button_start_harvester = self.tr("Start Harvester", "収集開始");
+
+        ui.heading(heading);
+        ui.label(desc);
 
         ui.horizontal(|ui| {
-            ui.label("API Key");
+            ui.label(label_api_key);
             ui.add(egui::TextEdit::singleline(&mut self.harvester.api_key).password(true));
         });
         ui.horizontal(|ui| {
-            ui.label("Player");
+            ui.label(label_player);
             ui.text_edit_singleline(&mut self.harvester.player);
         });
-        ui_folder_field(ui, "Output Dir", &mut self.harvester.output_dir);
+        ui_folder_field(
+            ui,
+            label_output_dir,
+            &mut self.harvester.output_dir,
+            label_browse,
+        );
         let player_slug = slugify_player_name(&self.harvester.player);
         let save_preview = if self.harvester.output_dir.trim().is_empty() {
             format!("replays/{player_slug}/yyyy-mm-dd/<replay_id>.replay")
@@ -237,14 +409,14 @@ impl RlGuiApp {
                 self.harvester.output_dir.trim()
             )
         };
-        ui.label("Saved files layout:");
+        ui.label(label_saved_layout);
         ui.monospace(save_preview);
         ui.horizontal(|ui| {
-            ui.label("Max Pages");
+            ui.label(label_max_pages);
             ui.add(egui::DragValue::new(&mut self.harvester.max_pages).range(1..=100));
         });
         ui.horizontal(|ui| {
-            ui.label("Request Interval (sec)");
+            ui.label(label_request_interval);
             ui.add(
                 egui::DragValue::new(&mut self.harvester.request_interval_seconds)
                     .range(MIN_REQUEST_INTERVAL_SECONDS..=300),
@@ -252,7 +424,7 @@ impl RlGuiApp {
         });
 
         if ui
-            .add_enabled(!self.running, egui::Button::new("Start Harvester"))
+            .add_enabled(!self.running, egui::Button::new(button_start_harvester))
             .clicked()
         {
             self.start_task(TaskKind::Harvester(self.harvester.clone()));
@@ -260,26 +432,49 @@ impl RlGuiApp {
     }
 
     fn ui_replay2json(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Replay2JSON");
-        ui.label("Convert .replay files to JSON.");
-
-        ui_folder_field(ui, "Input Dir", &mut self.replay2json.input_dir);
-        ui_folder_field(ui, "Output Dir", &mut self.replay2json.output_dir);
-        ui.checkbox(
-            &mut self.replay2json.watch_mode,
-            "Watch input folder and convert newly added files",
+        let heading = self.tr("Replay2JSON", "リプレイJSON変換");
+        let desc = self.tr(
+            "Convert .replay files to JSON.",
+            ".replay ファイルを JSON に変換します。",
         );
+        let label_input_dir = self.tr("Input Dir", "入力元ディレクトリ");
+        let label_output_dir = self.tr("Output Dir", "出力先ディレクトリ");
+        let label_browse = self.tr("Browse...", "参照...");
+        let label_watch = self.tr(
+            "Watch input folder and convert newly added files",
+            "入力フォルダを監視して新規ファイルを自動変換",
+        );
+        let label_watch_interval = self.tr("Watch Interval (sec)", "監視間隔(秒)");
+        let label_pretty = self.tr("Pretty JSON", "整形JSON");
+        let button_start = self.tr("Start Replay2JSON", "変換開始");
+
+        ui.heading(heading);
+        ui.label(desc);
+
+        ui_folder_field(
+            ui,
+            label_input_dir,
+            &mut self.replay2json.input_dir,
+            label_browse,
+        );
+        ui_folder_field(
+            ui,
+            label_output_dir,
+            &mut self.replay2json.output_dir,
+            label_browse,
+        );
+        ui.checkbox(&mut self.replay2json.watch_mode, label_watch);
         ui.horizontal(|ui| {
-            ui.label("Watch Interval (sec)");
+            ui.label(label_watch_interval);
             ui.add(
                 egui::DragValue::new(&mut self.replay2json.watch_interval_seconds)
                     .range(MIN_WATCH_INTERVAL_SECONDS..=300),
             );
         });
-        ui.checkbox(&mut self.replay2json.pretty_json, "Pretty JSON");
+        ui.checkbox(&mut self.replay2json.pretty_json, label_pretty);
 
         if ui
-            .add_enabled(!self.running, egui::Button::new("Start Replay2JSON"))
+            .add_enabled(!self.running, egui::Button::new(button_start))
             .clicked()
         {
             self.start_task(TaskKind::Replay2Json(self.replay2json.clone()));
@@ -288,7 +483,7 @@ impl RlGuiApp {
 
     fn ui_logs(&mut self, ui: &mut egui::Ui) {
         ui.separator();
-        ui.heading("Logs");
+        ui.heading(self.tr("Logs", "ログ"));
 
         egui::ScrollArea::vertical()
             .stick_to_bottom(true)
@@ -301,11 +496,45 @@ impl RlGuiApp {
     }
 }
 
-fn ui_folder_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
+fn relocalize_logs(logs: &mut [String], from: Language, to: Language) {
+    if from == to {
+        return;
+    }
+
+    for line in logs {
+        match (from, to) {
+            (Language::English, Language::Japanese) => {
+                *line = line.replace("starting task...", "タスクを開始しました...");
+                *line = line.replace("task finished", "タスクが完了しました");
+                *line = line.replace("task failed:", "タスク失敗:");
+
+                *line = line.replace(": up to date (current v", ": 最新です (現在 v");
+                *line = line.replace(": update available ", ": 更新があります ");
+                *line = line.replace(": skipped by user", ": ユーザーが更新をスキップしました");
+                *line = line.replace(": check failed:", ": 確認に失敗しました:");
+                *line = line.replace(": update failed:", ": 更新失敗:");
+            }
+            (Language::Japanese, Language::English) => {
+                *line = line.replace("タスクを開始しました...", "starting task...");
+                *line = line.replace("タスクが完了しました", "task finished");
+                *line = line.replace("タスク失敗:", "task failed:");
+
+                *line = line.replace(": 最新です (現在 v", ": up to date (current v");
+                *line = line.replace(": 更新があります ", ": update available ");
+                *line = line.replace(": ユーザーが更新をスキップしました", ": skipped by user");
+                *line = line.replace(": 確認に失敗しました:", ": check failed:");
+                *line = line.replace(": 更新失敗:", ": update failed:");
+            }
+            _ => {}
+        }
+    }
+}
+
+fn ui_folder_field(ui: &mut egui::Ui, label: &str, value: &mut String, browse_label: &str) {
     ui.horizontal(|ui| {
         ui.label(label);
         ui.add(egui::TextEdit::singleline(value).desired_width(420.0));
-        if ui.button("Browse...").clicked() {
+        if ui.button(browse_label).clicked() {
             let selected = if value.trim().is_empty() {
                 FileDialog::new().pick_folder()
             } else {
@@ -943,7 +1172,7 @@ struct ReleaseAsset {
     browser_download_url: String,
 }
 
-fn run_gui_update_flow(binary_name: &str) -> Vec<String> {
+fn run_gui_update_flow(binary_name: &str, language: Language) -> Vec<String> {
     let mut logs = Vec::new();
     if !update_check_enabled() {
         return logs;
@@ -952,17 +1181,27 @@ fn run_gui_update_flow(binary_name: &str) -> Vec<String> {
     match find_update_candidate(binary_name) {
         Ok(Some(candidate)) => {
             logs.push(format!(
-                "[update] {binary_name}: update available {} -> {} ({})",
+                "[update] {binary_name}: {} {} -> {} ({})",
+                tr_for_language(language, "update available", "更新があります"),
                 env!("CARGO_PKG_VERSION"),
                 candidate.version,
                 candidate.page_url
             ));
 
             let answer = MessageDialog::new()
-                .set_title("Update Available")
+                .set_title(tr_for_language(
+                    language,
+                    "Update Available",
+                    "アップデートがあります",
+                ))
                 .set_description(format!(
-                    "{binary_name} {} is available.\nInstall now?",
-                    candidate.tag_name
+                    "{}\n{}",
+                    tr_for_language(
+                        language,
+                        &format!("{binary_name} {} is available.", candidate.tag_name),
+                        &format!("{binary_name} {} が利用可能です。", candidate.tag_name),
+                    ),
+                    tr_for_language(language, "Install now?", "今すぐ更新しますか？"),
                 ))
                 .set_level(MessageLevel::Info)
                 .set_buttons(MessageButtons::YesNo)
@@ -971,19 +1210,33 @@ fn run_gui_update_flow(binary_name: &str) -> Vec<String> {
             if answer == MessageDialogResult::Yes {
                 match download_and_replace_executable(binary_name, &candidate.download_url) {
                     Ok(message) => {
-                        logs.push(format!("[update] {binary_name}: {message}"));
+                        logs.push(format!(
+                            "[update] {binary_name}: {}",
+                            tr_for_language(
+                                language,
+                                &message,
+                                "更新を開始しました。完了後にアプリを再起動してください。",
+                            )
+                        ));
                         let _ = MessageDialog::new()
-                            .set_title("Update")
-                            .set_description(message)
+                            .set_title(tr_for_language(language, "Update", "更新"))
+                            .set_description(tr_for_language(
+                                language,
+                                &message,
+                                "更新を開始しました。完了後にアプリを再起動してください。",
+                            ))
                             .set_level(MessageLevel::Info)
                             .set_buttons(MessageButtons::Ok)
                             .show();
                     }
                     Err(err) => {
-                        let message = format!("[update] {binary_name}: update failed: {err}");
+                        let message = format!(
+                            "[update] {binary_name}: {}: {err}",
+                            tr_for_language(language, "update failed", "更新失敗")
+                        );
                         logs.push(message.clone());
                         let _ = MessageDialog::new()
-                            .set_title("Update Failed")
+                            .set_title(tr_for_language(language, "Update Failed", "更新失敗"))
                             .set_description(message)
                             .set_level(MessageLevel::Error)
                             .set_buttons(MessageButtons::Ok)
@@ -991,17 +1244,36 @@ fn run_gui_update_flow(binary_name: &str) -> Vec<String> {
                     }
                 }
             } else {
-                logs.push(format!("[update] {binary_name}: skipped by user"));
+                logs.push(format!(
+                    "[update] {binary_name}: {}",
+                    tr_for_language(
+                        language,
+                        "skipped by user",
+                        "ユーザーが更新をスキップしました"
+                    )
+                ));
             }
         }
         Ok(None) => logs.push(format!(
-            "[update] {binary_name}: up to date (current v{})",
+            "[update] {binary_name}: {} ({} v{})",
+            tr_for_language(language, "up to date", "最新です"),
+            tr_for_language(language, "current", "現在"),
             env!("CARGO_PKG_VERSION")
         )),
-        Err(err) => logs.push(format!("[update] {binary_name}: check failed: {err}")),
+        Err(err) => logs.push(format!(
+            "[update] {binary_name}: {}: {err}",
+            tr_for_language(language, "check failed", "確認に失敗しました")
+        )),
     }
 
     logs
+}
+
+fn tr_for_language<'a>(language: Language, en: &'a str, ja: &'a str) -> &'a str {
+    match language {
+        Language::English => en,
+        Language::Japanese => ja,
+    }
 }
 
 fn update_check_enabled() -> bool {
