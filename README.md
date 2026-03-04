@@ -149,3 +149,29 @@ cross build --release \
   -p rl-replay-harvester \
   -p rl-replay2json
 ```
+
+## macOS Build
+
+Build GUI and CLI binaries on macOS:
+
+```bash
+./scripts/build-macos.sh
+```
+
+You can also specify target and profile:
+
+```bash
+./scripts/build-macos.sh aarch64-apple-darwin --release
+./scripts/build-macos.sh x86_64-apple-darwin
+```
+
+Direct command equivalent:
+
+```bash
+rustup target add aarch64-apple-darwin # or x86_64-apple-darwin
+cargo build --release \
+  --target aarch64-apple-darwin \
+  -p rl-common \
+  -p rl-replay-harvester \
+  -p rl-replay2json
+```

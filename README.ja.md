@@ -127,3 +127,29 @@ cross build --release \
   -p rl-replay-harvester \
   -p rl-replay2json
 ```
+
+## macOS 向けビルド
+
+### スクリプト実行
+
+```bash
+./scripts/build-macos.sh
+```
+
+### ターゲット・プロファイル指定
+
+```bash
+./scripts/build-macos.sh aarch64-apple-darwin --release
+./scripts/build-macos.sh x86_64-apple-darwin
+```
+
+### 直接実行
+
+```bash
+rustup target add aarch64-apple-darwin # または x86_64-apple-darwin
+cargo build --release \
+  --target aarch64-apple-darwin \
+  -p rl-common \
+  -p rl-replay-harvester \
+  -p rl-replay2json
+```

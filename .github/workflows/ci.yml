@@ -51,3 +51,24 @@ jobs:
 
       - name: Clippy (workspace)
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  workspace-check-macos:
+    name: Workspace Check (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check workspace
+        run: cargo check --workspace
+
+      - name: Clippy (workspace)
+        run: cargo clippy --workspace --all-targets -- -D warnings
