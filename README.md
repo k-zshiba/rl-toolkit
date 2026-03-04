@@ -21,9 +21,11 @@ Generated binary name: `rl-toolkit` (`rl-toolkit.exe` on Windows)
 Notes:
 - Windows is supported for this GUI app.
 - On Linux, the app defaults `WINIT_UNIX_BACKEND=x11` to avoid common Wayland `XKBNotFound` issues.
+- If Japanese text is garbled, set `RL_TOOLKIT_FONT_PATH` to a Japanese-capable font file path (`.ttf`/`.otf`/`.ttc`).
 
 ### GUI features
 
+- language switch: English / Japanese
 - Replay Harvester tab:
   - API key / player / output directory input
   - `Browse...` button for output folder selection
