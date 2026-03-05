@@ -6,7 +6,7 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::AUTHORIZATION;
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use semver::Version;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -157,7 +157,7 @@ enum Language {
     Japanese,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct HarvesterSettings {
     api_key: String,
     player: String,
@@ -178,7 +178,7 @@ impl Default for HarvesterSettings {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Replay2JsonSettings {
     input_dir: String,
     output_dir: String,
@@ -222,16 +222,32 @@ struct RlGuiApp {
     worker_cancel: Option<Arc<AtomicBool>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SavedGuiSettings {
+    harvester: HarvesterSettings,
+    replay2json: Replay2JsonSettings,
+}
+
+impl Default for SavedGuiSettings {
+    fn default() -> Self {
+        Self {
+            harvester: HarvesterSettings::default(),
+            replay2json: Replay2JsonSettings::default(),
+        }
+    }
+}
+
 impl Default for RlGuiApp {
     fn default() -> Self {
         let language = detect_initial_language();
         let logs = run_gui_update_flow("rl-toolkit", language);
+        let saved = load_saved_settings();
 
         Self {
             language,
             tab: Tab::Harvester,
-            harvester: HarvesterSettings::default(),
-            replay2json: Replay2JsonSettings::default(),
+            harvester: saved.harvester,
+            replay2json: saved.replay2json,
             logs,
             running: false,
             worker_rx: None,
@@ -329,6 +345,14 @@ impl RlGuiApp {
         }
     }
 
+    fn persist_settings(&self) {
+        let settings = SavedGuiSettings {
+            harvester: self.harvester.clone(),
+            replay2json: self.replay2json.clone(),
+        };
+        let _ = save_saved_settings(&settings);
+    }
+
     fn ui_header(&mut self, ui: &mut egui::Ui) {
         let tab_harvester = self.tr("Replay Harvester", "リプレイ収集");
         let tab_replay2json = self.tr("Replay2JSON", "リプレイJSON変換");
@@ -382,24 +406,34 @@ impl RlGuiApp {
         let label_max_pages = self.tr("Max Pages", "最大ページ数");
         let label_request_interval = self.tr("Request Interval (sec)", "リクエスト間隔(秒)");
         let button_start_harvester = self.tr("Start Harvester", "収集開始");
+        let mut settings_changed = false;
 
         ui.heading(heading);
         ui.label(desc);
 
         ui.horizontal(|ui| {
             ui.label(label_api_key);
-            ui.add(egui::TextEdit::singleline(&mut self.harvester.api_key).password(true));
+            if ui
+                .add(egui::TextEdit::singleline(&mut self.harvester.api_key).password(true))
+                .changed()
+            {
+                settings_changed = true;
+            }
         });
         ui.horizontal(|ui| {
             ui.label(label_player);
-            ui.text_edit_singleline(&mut self.harvester.player);
+            if ui.text_edit_singleline(&mut self.harvester.player).changed() {
+                settings_changed = true;
+            }
         });
-        ui_folder_field(
+        if ui_folder_field(
             ui,
             label_output_dir,
             &mut self.harvester.output_dir,
             label_browse,
-        );
+        ) {
+            settings_changed = true;
+        }
         let player_slug = slugify_player_name(&self.harvester.player);
         let save_preview = if self.harvester.output_dir.trim().is_empty() {
             format!("replays/{player_slug}/yyyy-mm-dd/<replay_id>.replay")
@@ -413,15 +447,28 @@ impl RlGuiApp {
         ui.monospace(save_preview);
         ui.horizontal(|ui| {
             ui.label(label_max_pages);
-            ui.add(egui::DragValue::new(&mut self.harvester.max_pages).range(1..=100));
+            if ui
+                .add(egui::DragValue::new(&mut self.harvester.max_pages).range(1..=100))
+                .changed()
+            {
+                settings_changed = true;
+            }
         });
         ui.horizontal(|ui| {
             ui.label(label_request_interval);
-            ui.add(
-                egui::DragValue::new(&mut self.harvester.request_interval_seconds)
-                    .range(MIN_REQUEST_INTERVAL_SECONDS..=300),
-            );
+            if ui
+                .add(
+                    egui::DragValue::new(&mut self.harvester.request_interval_seconds)
+                        .range(MIN_REQUEST_INTERVAL_SECONDS..=300),
+                )
+                .changed()
+            {
+                settings_changed = true;
+            }
         });
+        if settings_changed {
+            self.persist_settings();
+        }
 
         if ui
             .add_enabled(!self.running, egui::Button::new(button_start_harvester))
@@ -447,31 +494,54 @@ impl RlGuiApp {
         let label_watch_interval = self.tr("Watch Interval (sec)", "監視間隔(秒)");
         let label_pretty = self.tr("Pretty JSON", "整形JSON");
         let button_start = self.tr("Start Replay2JSON", "変換開始");
+        let mut settings_changed = false;
 
         ui.heading(heading);
         ui.label(desc);
 
-        ui_folder_field(
+        if ui_folder_field(
             ui,
             label_input_dir,
             &mut self.replay2json.input_dir,
             label_browse,
-        );
-        ui_folder_field(
+        ) {
+            settings_changed = true;
+        }
+        if ui_folder_field(
             ui,
             label_output_dir,
             &mut self.replay2json.output_dir,
             label_browse,
-        );
-        ui.checkbox(&mut self.replay2json.watch_mode, label_watch);
+        ) {
+            settings_changed = true;
+        }
+        if ui
+            .checkbox(&mut self.replay2json.watch_mode, label_watch)
+            .changed()
+        {
+            settings_changed = true;
+        }
         ui.horizontal(|ui| {
             ui.label(label_watch_interval);
-            ui.add(
-                egui::DragValue::new(&mut self.replay2json.watch_interval_seconds)
-                    .range(MIN_WATCH_INTERVAL_SECONDS..=300),
-            );
+            if ui
+                .add(
+                    egui::DragValue::new(&mut self.replay2json.watch_interval_seconds)
+                        .range(MIN_WATCH_INTERVAL_SECONDS..=300),
+                )
+                .changed()
+            {
+                settings_changed = true;
+            }
         });
-        ui.checkbox(&mut self.replay2json.pretty_json, label_pretty);
+        if ui
+            .checkbox(&mut self.replay2json.pretty_json, label_pretty)
+            .changed()
+        {
+            settings_changed = true;
+        }
+        if settings_changed {
+            self.persist_settings();
+        }
 
         if ui
             .add_enabled(!self.running, egui::Button::new(button_start))
@@ -530,10 +600,14 @@ fn relocalize_logs(logs: &mut [String], from: Language, to: Language) {
     }
 }
 
-fn ui_folder_field(ui: &mut egui::Ui, label: &str, value: &mut String, browse_label: &str) {
+fn ui_folder_field(ui: &mut egui::Ui, label: &str, value: &mut String, browse_label: &str) -> bool {
+    let mut changed = false;
+
     ui.horizontal(|ui| {
         ui.label(label);
-        ui.add(egui::TextEdit::singleline(value).desired_width(420.0));
+        if ui.add(egui::TextEdit::singleline(value).desired_width(420.0)).changed() {
+            changed = true;
+        }
         if ui.button(browse_label).clicked() {
             let selected = if value.trim().is_empty() {
                 FileDialog::new().pick_folder()
@@ -544,9 +618,94 @@ fn ui_folder_field(ui: &mut egui::Ui, label: &str, value: &mut String, browse_la
             };
             if let Some(path) = selected {
                 *value = path.display().to_string();
+                changed = true;
             }
         }
     });
+
+    changed
+}
+
+fn settings_directory() -> Result<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let app_data = env::var("APPDATA").context("APPDATA environment variable is not set")?;
+        if app_data.trim().is_empty() {
+            anyhow::bail!("APPDATA environment variable is empty");
+        }
+        return Ok(PathBuf::from(app_data).join("rl-toolkit"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = env::var("HOME").context("HOME environment variable is not set")?;
+        if home.trim().is_empty() {
+            anyhow::bail!("HOME environment variable is empty");
+        }
+        return Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("rl-toolkit"));
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        if let Ok(xdg_config_home) = env::var("XDG_CONFIG_HOME") {
+            if !xdg_config_home.trim().is_empty() {
+                return Ok(PathBuf::from(xdg_config_home).join("rl-toolkit"));
+            }
+        }
+
+        let home = env::var("HOME").context("HOME environment variable is not set")?;
+        if home.trim().is_empty() {
+            anyhow::bail!("HOME environment variable is empty");
+        }
+        return Ok(PathBuf::from(home).join(".config").join("rl-toolkit"));
+    }
+}
+
+fn saved_settings_path() -> Result<PathBuf> {
+    Ok(settings_directory()?.join("gui-settings.json"))
+}
+
+fn load_saved_settings() -> SavedGuiSettings {
+    let path = match saved_settings_path() {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("[settings] no config path, using defaults: {err}");
+            return SavedGuiSettings::default();
+        }
+    };
+
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("[settings] failed to read {}: {err}", path.display());
+            }
+            return SavedGuiSettings::default();
+        }
+    };
+
+    serde_json::from_str::<SavedGuiSettings>(&raw).unwrap_or_else(|err| {
+        eprintln!("[settings] failed to parse {}: {err}", path.display());
+        SavedGuiSettings::default()
+    })
+}
+
+fn save_saved_settings(settings: &SavedGuiSettings) -> Result<()> {
+    let path = saved_settings_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create settings directory {}", parent.display())
+        })?;
+    }
+
+    let payload = serde_json::to_string_pretty(settings).context("failed to serialize settings")?;
+    fs::write(&path, payload).with_context(|| {
+        format!("failed to write settings file {}", path.display())
+    })?;
+    Ok(())
 }
 
 impl eframe::App for RlGuiApp {
