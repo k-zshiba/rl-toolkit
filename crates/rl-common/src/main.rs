@@ -1447,6 +1447,7 @@ fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> 
     Ok("update staged. relaunching now after replacement".to_string())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_new_process(executable: &Path) -> Result<()> {
     Command::new(executable)
         .spawn()
