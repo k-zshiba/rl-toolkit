@@ -11,8 +11,7 @@ use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "windows")]
-use std::process::Command;
+use std::process::{self, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
@@ -1209,25 +1208,24 @@ fn run_gui_update_flow(binary_name: &str, language: Language) -> Vec<String> {
 
             if answer == MessageDialogResult::Yes {
                 match download_and_replace_executable(binary_name, &candidate.download_url) {
-                    Ok(message) => {
-                        logs.push(format!(
-                            "[update] {binary_name}: {}",
-                            tr_for_language(
-                                language,
-                                &message,
-                                "更新を開始しました。完了後にアプリを再起動してください。",
-                            )
-                        ));
+                    Ok(_message) => {
+                        let message = tr_for_language(
+                            language,
+                            "Update started. The app is replacing executable and restarting.",
+                            "更新を開始しました。実行ファイルを置き換えて再起動します。",
+                        );
+                        logs.push(format!("[update] {binary_name}: {message}"));
                         let _ = MessageDialog::new()
                             .set_title(tr_for_language(language, "Update", "更新"))
                             .set_description(tr_for_language(
                                 language,
-                                &message,
-                                "更新を開始しました。完了後にアプリを再起動してください。",
+                                "Update started. The app is replacing executable and restarting.",
+                                "更新を開始しました。実行ファイルを置き換えて再起動します。",
                             ))
                             .set_level(MessageLevel::Info)
                             .set_buttons(MessageButtons::Ok)
                             .show();
+                        process::exit(0);
                     }
                     Err(err) => {
                         let message = format!(
@@ -1415,8 +1413,14 @@ fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> 
             staged_path.display()
         )
     })?;
+    launch_new_process(current_exe).with_context(|| {
+        format!(
+            "failed to relaunch updated executable {}",
+            current_exe.display()
+        )
+    })?;
     Ok(format!(
-        "updated successfully. restart to use the new version ({})",
+        "updated successfully. relaunching now ({})",
         current_exe.display()
     ))
 }
@@ -1428,8 +1432,9 @@ fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> 
     let script_path = PathBuf::from(script_name);
 
     let script = format!(
-        "@echo off\r\n:retry\r\nmove /Y \"{}\" \"{}\" >nul 2>nul\r\nif errorlevel 1 (\r\n  timeout /T 1 /NOBREAK >nul\r\n  goto retry\r\n)\r\ndel \"%~f0\"\r\n",
+        "@echo off\r\n:retry\r\nmove /Y \"{}\" \"{}\" >nul 2>nul\r\nif errorlevel 1 (\r\n  timeout /T 1 /NOBREAK >nul\r\n  goto retry\r\n)\r\nstart \"\" \"{}\"\r\ndel \"%~f0\"\r\n",
         staged_path.display(),
+        current_exe.display(),
         current_exe.display()
     );
 
@@ -1442,7 +1447,18 @@ fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> 
         .spawn()
         .with_context(|| format!("failed to launch updater script {}", script_path.display()))?;
 
-    Ok("update staged. restart this app to complete replacement".to_string())
+    Ok("update staged. relaunching now after replacement".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn launch_new_process(executable: &Path) -> Result<()> {
+    Command::new(executable).spawn().with_context(|| {
+        format!(
+            "failed to launch updated executable {}",
+            executable.display()
+        )
+    })?;
+    Ok(())
 }
 
 fn github_api_get(client: &Client, url: &str) -> reqwest::blocking::RequestBuilder {
