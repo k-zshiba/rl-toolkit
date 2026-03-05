@@ -222,19 +222,10 @@ struct RlGuiApp {
     worker_cancel: Option<Arc<AtomicBool>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct SavedGuiSettings {
     harvester: HarvesterSettings,
     replay2json: Replay2JsonSettings,
-}
-
-impl Default for SavedGuiSettings {
-    fn default() -> Self {
-        Self {
-            harvester: HarvesterSettings::default(),
-            replay2json: Replay2JsonSettings::default(),
-        }
-    }
 }
 
 impl Default for RlGuiApp {
@@ -633,7 +624,7 @@ fn settings_directory() -> Result<PathBuf> {
         if app_data.trim().is_empty() {
             anyhow::bail!("APPDATA environment variable is empty");
         }
-        return Ok(PathBuf::from(app_data).join("rl-toolkit"));
+        Ok(PathBuf::from(app_data).join("rl-toolkit"))
     }
 
     #[cfg(target_os = "macos")]
@@ -642,25 +633,28 @@ fn settings_directory() -> Result<PathBuf> {
         if home.trim().is_empty() {
             anyhow::bail!("HOME environment variable is empty");
         }
-        return Ok(PathBuf::from(home)
+        Ok(PathBuf::from(home)
             .join("Library")
             .join("Application Support")
-            .join("rl-toolkit"));
+            .join("rl-toolkit"))
     }
 
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
-        if let Ok(xdg_config_home) = env::var("XDG_CONFIG_HOME") {
-            if !xdg_config_home.trim().is_empty() {
-                return Ok(PathBuf::from(xdg_config_home).join("rl-toolkit"));
-            }
-        }
+        let xdg_candidate = env::var("XDG_CONFIG_HOME")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from);
 
-        let home = env::var("HOME").context("HOME environment variable is not set")?;
-        if home.trim().is_empty() {
-            anyhow::bail!("HOME environment variable is empty");
+        if let Some(xdg_home) = xdg_candidate {
+            Ok(xdg_home.join("rl-toolkit"))
+        } else {
+            let home = env::var("HOME").context("HOME environment variable is not set")?;
+            if home.trim().is_empty() {
+                anyhow::bail!("HOME environment variable is empty");
+            }
+            Ok(PathBuf::from(home).join(".config").join("rl-toolkit"))
         }
-        return Ok(PathBuf::from(home).join(".config").join("rl-toolkit"));
     }
 }
 
