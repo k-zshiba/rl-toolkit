@@ -1414,7 +1414,10 @@ fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> 
         )
     })?;
     launch_new_process(current_exe).with_context(|| {
-        format!("failed to relaunch updated executable {}", current_exe.display())
+        format!(
+            "failed to relaunch updated executable {}",
+            current_exe.display()
+        )
     })?;
     Ok(format!(
         "updated successfully. relaunching now ({})",
@@ -1449,11 +1452,12 @@ fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> 
 
 #[cfg(not(target_os = "windows"))]
 fn launch_new_process(executable: &Path) -> Result<()> {
-    Command::new(executable)
-        .spawn()
-        .with_context(|| {
-            format!("failed to launch updated executable {}", executable.display())
-        })?;
+    Command::new(executable).spawn().with_context(|| {
+        format!(
+            "failed to launch updated executable {}",
+            executable.display()
+        )
+    })?;
     Ok(())
 }
 
