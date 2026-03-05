@@ -412,7 +412,10 @@ impl RlGuiApp {
         });
         ui.horizontal(|ui| {
             ui.label(label_player);
-            if ui.text_edit_singleline(&mut self.harvester.player).changed() {
+            if ui
+                .text_edit_singleline(&mut self.harvester.player)
+                .changed()
+            {
                 settings_changed = true;
             }
         });
@@ -595,7 +598,10 @@ fn ui_folder_field(ui: &mut egui::Ui, label: &str, value: &mut String, browse_la
 
     ui.horizontal(|ui| {
         ui.label(label);
-        if ui.add(egui::TextEdit::singleline(value).desired_width(420.0)).changed() {
+        if ui
+            .add(egui::TextEdit::singleline(value).desired_width(420.0))
+            .changed()
+        {
             changed = true;
         }
         if ui.button(browse_label).clicked() {
@@ -689,15 +695,13 @@ fn load_saved_settings() -> SavedGuiSettings {
 fn save_saved_settings(settings: &SavedGuiSettings) -> Result<()> {
     let path = saved_settings_path()?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("failed to create settings directory {}", parent.display())
-        })?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create settings directory {}", parent.display()))?;
     }
 
     let payload = serde_json::to_string_pretty(settings).context("failed to serialize settings")?;
-    fs::write(&path, payload).with_context(|| {
-        format!("failed to write settings file {}", path.display())
-    })?;
+    fs::write(&path, payload)
+        .with_context(|| format!("failed to write settings file {}", path.display()))?;
     Ok(())
 }
 
