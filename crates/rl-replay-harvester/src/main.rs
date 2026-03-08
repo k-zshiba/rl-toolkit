@@ -552,8 +552,7 @@ fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> 
         current_exe.display()
     );
 
-    fs::write(&script_path, script)
-        .with_context(|| format!("failed to create updater script {}", script_path.display()))?;
+    write_cmd_script_utf16le(&script_path, &script)?;
 
     Command::new("cmd")
         .arg("/C")
@@ -562,6 +561,19 @@ fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> 
         .with_context(|| format!("failed to launch updater script {}", script_path.display()))?;
 
     Ok("update staged. restart this app to complete replacement".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn write_cmd_script_utf16le(path: &Path, script: &str) -> Result<()> {
+    let mut bytes = Vec::with_capacity(2 + script.len() * 2);
+    bytes.extend_from_slice(&[0xFF, 0xFE]);
+    for unit in script.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+
+    fs::write(path, bytes)
+        .with_context(|| format!("failed to create updater script {}", path.display()))?;
+    Ok(())
 }
 
 fn github_api_get(client: &Client, url: &str) -> reqwest::blocking::RequestBuilder {
