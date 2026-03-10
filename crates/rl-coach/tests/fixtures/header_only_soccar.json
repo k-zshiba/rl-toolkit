@@ -1,0 +1,39 @@
+{
+  "game_type": "TAGame.Replay_Soccar_TA",
+  "properties": {
+    "Date": "2026-03-09",
+    "MapName": "Mannfield",
+    "NumFrames": 3600,
+    "Goals": [
+      { "frame": 900, "PlayerName": "BlueOne", "PlayerTeam": 0 },
+      { "frame": 2400, "PlayerName": "OrangeOne", "PlayerTeam": 1 }
+    ],
+    "PlayerStats": [
+      {
+        "PlayerName": "BlueOne",
+        "PlayerTeam": 0,
+        "Score": 320,
+        "Goals": 1,
+        "Assists": 0,
+        "Shots": 2,
+        "Saves": 1,
+        "Demolitions": 0,
+        "SelfDemolitions": 0
+      },
+      {
+        "PlayerName": "OrangeOne",
+        "PlayerTeam": 1,
+        "Score": 310,
+        "Goals": 1,
+        "Assists": 0,
+        "Shots": 2,
+        "Saves": 0,
+        "Demolitions": 1,
+        "SelfDemolitions": 0
+      }
+    ]
+  },
+  "levels": ["Mannfield"],
+  "objects": [],
+  "names": []
+}

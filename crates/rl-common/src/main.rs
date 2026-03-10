@@ -5,6 +5,11 @@ use eframe::egui;
 use reqwest::blocking::{Client, Response};
 use reqwest::header::AUTHORIZATION;
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
+use rl_coach::{
+    AnalysisReport as CoachAnalysisReport, BatchSummary as CoachBatchSummary,
+    DiagnosisLabel as CoachDiagnosisLabel, MetricValue as CoachMetricValue,
+    analyze_path as coach_analyze_path, load_reports as coach_load_reports,
+};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -148,6 +153,7 @@ fn default_font_candidates() -> Vec<PathBuf> {
 enum Tab {
     Harvester,
     Replay2Json,
+    Coach,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,10 +204,55 @@ impl Default for Replay2JsonSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+enum CoachInputMode {
+    File,
+    #[default]
+    Directory,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CoachSettings {
+    input_mode: CoachInputMode,
+    input_path: String,
+    output_dir: String,
+    pretty_json: bool,
+}
+
+impl Default for CoachSettings {
+    fn default() -> Self {
+        Self {
+            input_mode: CoachInputMode::Directory,
+            input_path: String::new(),
+            output_dir: String::new(),
+            pretty_json: false,
+        }
+    }
+}
+
 #[derive(Debug)]
 enum TaskKind {
     Harvester(HarvesterSettings),
     Replay2Json(Replay2JsonSettings),
+    Coach(CoachSettings),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunningTask {
+    Harvester,
+    Replay2Json,
+    Coach,
+}
+
+impl RunningTask {
+    fn from_task(task: &TaskKind) -> Self {
+        match task {
+            TaskKind::Harvester(_) => Self::Harvester,
+            TaskKind::Replay2Json(_) => Self::Replay2Json,
+            TaskKind::Coach(_) => Self::Coach,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -215,16 +266,28 @@ struct RlGuiApp {
     tab: Tab,
     harvester: HarvesterSettings,
     replay2json: Replay2JsonSettings,
+    coach: CoachSettings,
+    coach_view: CoachViewState,
     logs: Vec<String>,
     running: bool,
     worker_rx: Option<mpsc::Receiver<WorkerEvent>>,
     worker_cancel: Option<Arc<AtomicBool>>,
+    active_task: Option<RunningTask>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 struct SavedGuiSettings {
     harvester: HarvesterSettings,
     replay2json: Replay2JsonSettings,
+    coach: CoachSettings,
+}
+
+#[derive(Debug, Default)]
+struct CoachViewState {
+    summary: Option<CoachBatchSummary>,
+    selected_match_index: usize,
+    load_error: Option<String>,
 }
 
 impl Default for RlGuiApp {
@@ -238,10 +301,13 @@ impl Default for RlGuiApp {
             tab: Tab::Harvester,
             harvester: saved.harvester,
             replay2json: saved.replay2json,
+            coach: saved.coach,
+            coach_view: CoachViewState::default(),
             logs,
             running: false,
             worker_rx: None,
             worker_cancel: None,
+            active_task: None,
         }
     }
 }
@@ -277,6 +343,7 @@ impl RlGuiApp {
         let (tx, rx) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_worker = Arc::clone(&cancel);
+        let running_task = RunningTask::from_task(&task);
 
         self.logs.push(
             self.tr("starting task...", "タスクを開始しました...")
@@ -285,6 +352,7 @@ impl RlGuiApp {
         self.running = true;
         self.worker_cancel = Some(cancel);
         self.worker_rx = Some(rx);
+        self.active_task = Some(running_task);
 
         thread::spawn(move || {
             let result = match task {
@@ -294,6 +362,7 @@ impl RlGuiApp {
                 TaskKind::Replay2Json(settings) => {
                     run_replay2json_task(settings, &tx, &cancel_for_worker)
                 }
+                TaskKind::Coach(settings) => run_coach_task(settings, &tx, &cancel_for_worker),
             };
 
             let _ = tx.send(WorkerEvent::Finished(result.map_err(|err| err.to_string())));
@@ -308,16 +377,25 @@ impl RlGuiApp {
 
     fn poll_worker_events(&mut self) {
         let mut done = false;
+        let mut refresh_coach = false;
 
         if let Some(rx) = &self.worker_rx {
             while let Ok(event) = rx.try_recv() {
                 match event {
                     WorkerEvent::Log(line) => self.logs.push(line),
                     WorkerEvent::Finished(result) => {
+                        let finished_task = self.active_task;
                         match result {
-                            Ok(()) => self
-                                .logs
-                                .push(self.tr("task finished", "タスクが完了しました").to_string()),
+                            Ok(()) => {
+                                self.logs.push(
+                                    self.tr("task finished", "タスクが完了しました").to_string(),
+                                );
+                                if finished_task == Some(RunningTask::Coach)
+                                    && !self.coach.output_dir.trim().is_empty()
+                                {
+                                    refresh_coach = true;
+                                }
+                            }
                             Err(err) => self
                                 .logs
                                 .push(format!("{}: {err}", self.tr("task failed", "タスク失敗"))),
@@ -332,6 +410,14 @@ impl RlGuiApp {
             self.running = false;
             self.worker_rx = None;
             self.worker_cancel = None;
+            self.active_task = None;
+        }
+
+        if refresh_coach && let Err(err) = self.refresh_coach_view() {
+            self.logs.push(format!(
+                "{}: {err}",
+                self.tr("viewer refresh failed", "ビューア更新失敗")
+            ));
         }
     }
 
@@ -339,13 +425,41 @@ impl RlGuiApp {
         let settings = SavedGuiSettings {
             harvester: self.harvester.clone(),
             replay2json: self.replay2json.clone(),
+            coach: self.coach.clone(),
         };
         let _ = save_saved_settings(&settings);
+    }
+
+    fn refresh_coach_view(&mut self) -> Result<()> {
+        let output_dir = self.coach.output_dir.trim();
+        if output_dir.is_empty() {
+            self.coach_view.summary = None;
+            self.coach_view.selected_match_index = 0;
+            self.coach_view.load_error = None;
+            return Ok(());
+        }
+
+        let summary = load_coach_view_from_output_dir(Path::new(output_dir))?;
+        self.coach_view.selected_match_index = self
+            .coach_view
+            .selected_match_index
+            .min(summary.matches.len().saturating_sub(1));
+        self.coach_view.summary = Some(summary);
+        self.coach_view.load_error = None;
+        Ok(())
+    }
+
+    fn selected_coach_report(&self) -> Option<&CoachAnalysisReport> {
+        let summary = self.coach_view.summary.as_ref()?;
+        summary
+            .loaded_reports
+            .get(self.coach_view.selected_match_index)
     }
 
     fn ui_header(&mut self, ui: &mut egui::Ui) {
         let tab_harvester = self.tr("Replay Harvester", "リプレイ収集");
         let tab_replay2json = self.tr("Replay2JSON", "リプレイJSON変換");
+        let tab_coach = self.tr("RL Coach", "RL Coach");
         let label_language = self.tr("Language", "言語");
         let button_stop = self.tr("Stop Task", "タスク停止");
         let label_idle = self.tr("Idle", "待機中");
@@ -354,6 +468,7 @@ impl RlGuiApp {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.tab, Tab::Harvester, tab_harvester);
             ui.selectable_value(&mut self.tab, Tab::Replay2Json, tab_replay2json);
+            ui.selectable_value(&mut self.tab, Tab::Coach, tab_coach);
 
             ui.separator();
             ui.label(label_language);
@@ -544,6 +659,209 @@ impl RlGuiApp {
         }
     }
 
+    fn ui_coach(&mut self, ui: &mut egui::Ui) {
+        let heading = self.tr("RL Coach", "RL Coach");
+        let desc = self.tr(
+            "Analyze replay JSON and review per-match plus batch summaries.",
+            "リプレイ JSON を分析し、試合ごとの結果と全体集計を表示します。",
+        );
+        let label_input_mode = self.tr("Input Mode", "入力モード");
+        let label_input_path = self.tr("Input Path", "入力パス");
+        let label_output_dir = self.tr("Output Dir", "出力先ディレクトリ");
+        let label_browse = self.tr("Browse...", "参照...");
+        let label_pretty = self.tr("Pretty JSON", "整形JSON");
+        let button_start = self.tr("Start RL Coach", "分析開始");
+        let button_refresh = self.tr("Refresh Viewer", "ビューア更新");
+        let label_file = self.tr("Single File", "単一ファイル");
+        let label_dir = self.tr("Directory", "ディレクトリ");
+        let label_output_layout = self.tr("Output layout:", "出力レイアウト:");
+        let mut settings_changed = false;
+        let previous_input_mode = self.coach.input_mode;
+
+        ui.heading(heading);
+        ui.label(desc);
+
+        ui.horizontal(|ui| {
+            ui.label(label_input_mode);
+            egui::ComboBox::from_id_salt("coach_input_mode")
+                .selected_text(match self.coach.input_mode {
+                    CoachInputMode::File => label_file,
+                    CoachInputMode::Directory => label_dir,
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut self.coach.input_mode,
+                        CoachInputMode::File,
+                        label_file,
+                    );
+                    ui.selectable_value(
+                        &mut self.coach.input_mode,
+                        CoachInputMode::Directory,
+                        label_dir,
+                    );
+                });
+        });
+        if self.coach.input_mode != previous_input_mode {
+            settings_changed = true;
+        }
+
+        if ui_path_field(
+            ui,
+            label_input_path,
+            &mut self.coach.input_path,
+            label_browse,
+            match self.coach.input_mode {
+                CoachInputMode::File => PathPicker::File,
+                CoachInputMode::Directory => PathPicker::Folder,
+            },
+        ) {
+            settings_changed = true;
+        }
+        if ui_folder_field(
+            ui,
+            label_output_dir,
+            &mut self.coach.output_dir,
+            label_browse,
+        ) {
+            settings_changed = true;
+        }
+        if ui
+            .checkbox(&mut self.coach.pretty_json, label_pretty)
+            .changed()
+        {
+            settings_changed = true;
+        }
+        if settings_changed {
+            self.persist_settings();
+        }
+
+        let preview = if self.coach.output_dir.trim().is_empty() {
+            "analysis/yyyy-mm-dd/<replay_id>.json".to_string()
+        } else {
+            format!(
+                "{}/analysis/yyyy-mm-dd/<replay_id>.json",
+                self.coach.output_dir.trim()
+            )
+        };
+        ui.label(label_output_layout);
+        ui.monospace(preview);
+
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(!self.running, egui::Button::new(button_start))
+                .clicked()
+            {
+                self.start_task(TaskKind::Coach(self.coach.clone()));
+            }
+            if ui.button(button_refresh).clicked()
+                && let Err(err) = self.refresh_coach_view()
+            {
+                self.coach_view.load_error = Some(err.to_string());
+            }
+        });
+
+        egui::ScrollArea::vertical()
+            .id_salt("coach_viewer_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                self.ui_coach_viewer(ui);
+            });
+    }
+
+    fn ui_coach_viewer(&mut self, ui: &mut egui::Ui) {
+        ui.separator();
+        ui.heading(self.tr("Viewer", "ビューア"));
+
+        if let Some(error) = &self.coach_view.load_error {
+            ui.colored_label(egui::Color32::RED, error);
+        }
+
+        let Some(summary) = self.coach_view.summary.clone() else {
+            ui.label(self.tr(
+                "Run RL Coach or refresh the viewer after analysis results exist.",
+                "分析結果が出力されたあとに RL Coach を実行するか、ビューアを更新してください。",
+            ));
+            return;
+        };
+        let selected_report = self.selected_coach_report().cloned();
+
+        ui.label(format!(
+            "{}: {}",
+            self.tr("Matches", "試合数"),
+            summary.matches.len()
+        ));
+
+        egui::CollapsingHeader::new(self.tr("Batch Aggregate", "全体集計"))
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.heading(self.tr("Teams", "チーム"));
+                for team in &summary.team_aggregate {
+                    ui.group(|ui| {
+                        ui.label(format!(
+                            "{} ({})",
+                            team.name,
+                            format_match_record(team.matches, team.wins)
+                        ));
+                        ui_metrics_table(ui, &team.metrics, self.language);
+                    });
+                }
+
+                ui.separator();
+                ui.heading(self.tr("Players", "プレイヤー"));
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .show(ui, |ui| {
+                        for player in &summary.player_aggregate {
+                            ui.group(|ui| {
+                                ui.label(format!(
+                                    "{} [{}] ({})",
+                                    player.player_name,
+                                    team_name_label(player.team),
+                                    format_match_record(player.matches, player.wins)
+                                ));
+                                ui_metrics_table(ui, &player.metrics, self.language);
+                            });
+                        }
+                    });
+            });
+
+        ui.separator();
+        ui.columns(2, |columns| {
+            columns[0].heading(self.tr("Match List", "試合一覧"));
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .show(&mut columns[0], |ui| {
+                    for (index, manifest) in summary.matches.iter().enumerate() {
+                        let label = format!(
+                            "{} | {} | {} | {}-{} | {} | {} | {}",
+                            manifest.date,
+                            manifest.replay_id,
+                            manifest.map,
+                            manifest.final_score.blue,
+                            manifest.final_score.orange,
+                            manifest
+                                .winner
+                                .clone()
+                                .unwrap_or_else(|| "draw".to_string()),
+                            format!("{:?}", manifest.parse_quality).to_lowercase(),
+                            manifest.diagnosis_count
+                        );
+                        if ui
+                            .selectable_label(self.coach_view.selected_match_index == index, label)
+                            .clicked()
+                        {
+                            self.coach_view.selected_match_index = index;
+                        }
+                    }
+                });
+
+            columns[1].heading(self.tr("Match Detail", "試合詳細"));
+            if let Some(report) = selected_report.as_ref() {
+                ui_coach_report_detail(&mut columns[1], report, self.language);
+            }
+        });
+    }
+
     fn ui_logs(&mut self, ui: &mut egui::Ui) {
         ui.separator();
         ui.heading(self.tr("Logs", "ログ"));
@@ -570,6 +888,7 @@ fn relocalize_logs(logs: &mut [String], from: Language, to: Language) {
                 *line = line.replace("starting task...", "タスクを開始しました...");
                 *line = line.replace("task finished", "タスクが完了しました");
                 *line = line.replace("task failed:", "タスク失敗:");
+                *line = line.replace("viewer refresh failed:", "ビューア更新失敗:");
 
                 *line = line.replace(": up to date (current v", ": 最新です (現在 v");
                 *line = line.replace(": update available ", ": 更新があります ");
@@ -581,6 +900,7 @@ fn relocalize_logs(logs: &mut [String], from: Language, to: Language) {
                 *line = line.replace("タスクを開始しました...", "starting task...");
                 *line = line.replace("タスクが完了しました", "task finished");
                 *line = line.replace("タスク失敗:", "task failed:");
+                *line = line.replace("ビューア更新失敗:", "viewer refresh failed:");
 
                 *line = line.replace(": 最新です (現在 v", ": up to date (current v");
                 *line = line.replace(": 更新があります ", ": update available ");
@@ -593,7 +913,23 @@ fn relocalize_logs(logs: &mut [String], from: Language, to: Language) {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum PathPicker {
+    File,
+    Folder,
+}
+
 fn ui_folder_field(ui: &mut egui::Ui, label: &str, value: &mut String, browse_label: &str) -> bool {
+    ui_path_field(ui, label, value, browse_label, PathPicker::Folder)
+}
+
+fn ui_path_field(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    browse_label: &str,
+    picker: PathPicker,
+) -> bool {
     let mut changed = false;
 
     ui.horizontal(|ui| {
@@ -605,12 +941,13 @@ fn ui_folder_field(ui: &mut egui::Ui, label: &str, value: &mut String, browse_la
             changed = true;
         }
         if ui.button(browse_label).clicked() {
-            let selected = if value.trim().is_empty() {
-                FileDialog::new().pick_folder()
-            } else {
-                FileDialog::new()
-                    .set_directory(value.as_str())
-                    .pick_folder()
+            let mut dialog = FileDialog::new();
+            if !value.trim().is_empty() {
+                dialog = dialog.set_directory(value.as_str());
+            }
+            let selected = match picker {
+                PathPicker::File => dialog.pick_file(),
+                PathPicker::Folder => dialog.pick_folder(),
             };
             if let Some(path) = selected {
                 *value = path.display().to_string();
@@ -620,6 +957,272 @@ fn ui_folder_field(ui: &mut egui::Ui, label: &str, value: &mut String, browse_la
     });
 
     changed
+}
+
+fn load_coach_view_from_output_dir(path: &Path) -> Result<CoachBatchSummary> {
+    coach_load_reports(path)
+}
+
+fn format_match_record(matches: Option<usize>, wins: Option<usize>) -> String {
+    let matches = matches.unwrap_or(0);
+    let wins = wins.unwrap_or(0);
+    format!("{wins}/{matches}")
+}
+
+fn team_name_label(team: u8) -> &'static str {
+    if team == 0 { "Blue" } else { "Orange" }
+}
+
+fn team_name_label_for_language(team: u8, language: Language) -> &'static str {
+    match (team, language) {
+        (0, Language::Japanese) => "ブルー",
+        (1, Language::Japanese) => "オレンジ",
+        _ => team_name_label(team),
+    }
+}
+
+fn localized_diagnosis_label(label: CoachDiagnosisLabel, language: Language) -> &'static str {
+    match (label, language) {
+        (CoachDiagnosisLabel::KickoffBreakdown, Language::Japanese) => "キックオフ崩れ",
+        (CoachDiagnosisLabel::FailedClear, Language::Japanese) => "クリア失敗",
+        (CoachDiagnosisLabel::DemoDisruption, Language::Japanese) => "デモ妨害",
+        (CoachDiagnosisLabel::LowBoostDefense, Language::Japanese) => "低ブースト守備",
+        (CoachDiagnosisLabel::DoubleCommit, Language::Japanese) => "ダブルコミット",
+        (CoachDiagnosisLabel::RotationGap, Language::Japanese) => "ローテ崩れ",
+        (CoachDiagnosisLabel::ReboundPressure, Language::Japanese) => "リバウンド圧力",
+        (CoachDiagnosisLabel::KickoffBreakdown, Language::English) => "Kickoff Breakdown",
+        (CoachDiagnosisLabel::FailedClear, Language::English) => "Failed Clear",
+        (CoachDiagnosisLabel::DemoDisruption, Language::English) => "Demo Disruption",
+        (CoachDiagnosisLabel::LowBoostDefense, Language::English) => "Low Boost Defense",
+        (CoachDiagnosisLabel::DoubleCommit, Language::English) => "Double Commit",
+        (CoachDiagnosisLabel::RotationGap, Language::English) => "Rotation Gap",
+        (CoachDiagnosisLabel::ReboundPressure, Language::English) => "Rebound Pressure",
+    }
+}
+
+fn localized_diagnosis_metric(metric: &str, language: Language) -> String {
+    match (metric, language) {
+        ("goal_after_kickoff_seconds", Language::Japanese) => "キックオフ後失点秒数".to_string(),
+        ("last_touch_before_goal_seconds", Language::Japanese) => {
+            "最終守備タッチから失点までの秒数".to_string()
+        }
+        ("demo_before_goal_seconds", Language::Japanese) => "デモから失点までの秒数".to_string(),
+        ("average_defender_boost", Language::Japanese) => "守備側平均ブースト".to_string(),
+        ("defenders_near_ball", Language::Japanese) => "ボール付近の守備人数".to_string(),
+        ("closest_defender_to_own_goal", Language::Japanese) => {
+            "自ゴール最寄り守備距離".to_string()
+        }
+        ("sustained_pressure_seconds", Language::Japanese) => "継続圧力時間".to_string(),
+        _ => metric.to_string(),
+    }
+}
+
+fn localized_diagnosis_context(context: &str, language: Language) -> String {
+    if language == Language::English {
+        return context.to_string();
+    }
+
+    if let Some(player) = context.strip_suffix(" was removed from the play before the goal") {
+        return format!("{player} が失点前にプレーから外された");
+    }
+
+    match context {
+        "goal arrived before either team settled after kickoff reset" => {
+            "キックオフの陣形が整う前に失点した".to_string()
+        }
+        "defending team touched the ball shortly before conceding but did not exit the defensive half" => {
+            "守備側が触れたが、自陣からボールを逃がせないまま失点した".to_string()
+        }
+        "defending team entered the goal sequence with low average boost" => {
+            "守備側が低ブーストのまま失点シーケンスに入った".to_string()
+        }
+        "multiple defenders collapsed on the same ball in the defensive half" => {
+            "自陣で複数人が同じボールに寄り過ぎた".to_string()
+        }
+        "no defender was close enough to cover the goal line during the final approach" => {
+            "最終局面でゴール前をカバーできる守備者がいなかった".to_string()
+        }
+        "the ball stayed in the defending third under sustained attacking pressure" => {
+            "自陣深くで攻撃圧を受け続けたまま失点した".to_string()
+        }
+        _ => context.to_string(),
+    }
+}
+
+fn localized_metric_quality(quality: rl_coach::MetricQuality, language: Language) -> &'static str {
+    match (quality, language) {
+        (rl_coach::MetricQuality::Exact, Language::Japanese) => "正確",
+        (rl_coach::MetricQuality::Estimated, Language::Japanese) => "推定",
+        (rl_coach::MetricQuality::Unavailable, Language::Japanese) => "利用不可",
+        (rl_coach::MetricQuality::Exact, Language::English) => "exact",
+        (rl_coach::MetricQuality::Estimated, Language::English) => "estimated",
+        (rl_coach::MetricQuality::Unavailable, Language::English) => "unavailable",
+    }
+}
+
+fn localized_metric_note(note: &str, language: Language) -> String {
+    match (note, language) {
+        ("derived from network frame sampling", Language::Japanese) => {
+            "network frame のサンプリングから算出".to_string()
+        }
+        ("aggregated across analyzed matches", Language::Japanese) => {
+            "分析済み試合を集計した値".to_string()
+        }
+        ("network frames unavailable", Language::Japanese) => {
+            "network frame が利用できません".to_string()
+        }
+        ("header or PRI stat unavailable", Language::Japanese) => {
+            "header または PRI の統計が利用できません".to_string()
+        }
+        _ => note.to_string(),
+    }
+}
+
+fn ui_metrics_table(
+    ui: &mut egui::Ui,
+    metrics: &std::collections::BTreeMap<String, CoachMetricValue>,
+    language: Language,
+) {
+    egui::Grid::new(ui.next_auto_id())
+        .striped(true)
+        .show(ui, |ui| {
+            for (name, value) in metrics {
+                ui.monospace(name);
+                ui.label(format_metric_value(value, language));
+                ui.end_row();
+            }
+        });
+}
+
+fn ui_coach_report_detail(ui: &mut egui::Ui, report: &CoachAnalysisReport, language: Language) {
+    ui.label(format!(
+        "{} | {} | {}-{} | {}",
+        report.meta.date,
+        report.meta.map,
+        report.meta.final_score.blue,
+        report.meta.final_score.orange,
+        report
+            .meta
+            .winner
+            .clone()
+            .unwrap_or_else(|| "draw".to_string())
+    ));
+    ui.label(format!(
+        "{}: {:?}",
+        tr_for_language(language, "Parse Quality", "解析品質"),
+        report.availability.parse_quality
+    ));
+    if !report.warnings.is_empty() {
+        ui.separator();
+        ui.heading(tr_for_language(language, "Warnings", "警告"));
+        for warning in &report.warnings {
+            ui.label(warning);
+        }
+    }
+
+    ui.separator();
+    ui.heading(tr_for_language(language, "Team Metrics", "チーム指標"));
+    for team in &report.team_metrics {
+        ui.group(|ui| {
+            ui.label(team.name.as_str());
+            ui_metrics_table(ui, &team.metrics, language);
+        });
+    }
+
+    ui.separator();
+    ui.heading(tr_for_language(
+        language,
+        "Player Metrics",
+        "プレイヤー指標",
+    ));
+    for player in &report.player_metrics {
+        ui.group(|ui| {
+            ui.label(format!(
+                "{} [{}]",
+                player.player_name,
+                team_name_label(player.team)
+            ));
+            ui_metrics_table(ui, &player.metrics, language);
+        });
+    }
+
+    ui.separator();
+    ui.heading(tr_for_language(language, "Goal Diagnoses", "失点診断"));
+    if report.concede_diagnoses.is_empty() {
+        ui.label(tr_for_language(
+            language,
+            "No concede diagnoses available for this report.",
+            "この試合では失点診断を表示できません。",
+        ));
+    } else {
+        for diagnosis in &report.concede_diagnoses {
+            ui.group(|ui| {
+                let scoring_team = team_name_label_for_language(diagnosis.scoring_team, language);
+                let conceding_team =
+                    team_name_label_for_language(diagnosis.conceding_team, language);
+                let goal_header = match language {
+                    Language::English => {
+                        format!(
+                            "Goal {} | {} -> {}",
+                            diagnosis.goal_index + 1,
+                            scoring_team,
+                            conceding_team
+                        )
+                    }
+                    Language::Japanese => {
+                        format!(
+                            "ゴール {} | {} 得点 / {} 失点",
+                            diagnosis.goal_index + 1,
+                            scoring_team,
+                            conceding_team
+                        )
+                    }
+                };
+                ui.label(goal_header);
+                for label in &diagnosis.labels {
+                    ui.label(format!(
+                        "{} ({:.2})",
+                        localized_diagnosis_label(label.label, language),
+                        label.score
+                    ));
+                    for evidence in &label.evidence {
+                        let metric = localized_diagnosis_metric(&evidence.metric, language);
+                        let context =
+                            localized_diagnosis_context(&evidence.frame_context, language);
+                        ui.monospace(format!("{} | {} | {}", metric, evidence.value, context));
+                    }
+                }
+            });
+        }
+    }
+}
+
+fn format_metric_value(value: &CoachMetricValue, language: Language) -> String {
+    let quality = localized_metric_quality(value.quality, language);
+    match value.value {
+        Some(number) if (number.fract()).abs() < 0.001 => match &value.note {
+            Some(note) => format!(
+                "{number:.0} [{quality}] - {}",
+                localized_metric_note(note, language)
+            ),
+            None => format!("{number:.0} [{quality}]"),
+        },
+        Some(number) => match &value.note {
+            Some(note) => format!(
+                "{number:.2} [{quality}] - {}",
+                localized_metric_note(note, language)
+            ),
+            None => format!("{number:.2} [{quality}]"),
+        },
+        None => format!(
+            "{} [{quality}]",
+            value
+                .note
+                .as_deref()
+                .map(|note| localized_metric_note(note, language))
+                .unwrap_or_else(|| "n/a".to_string()),
+        ),
+    }
 }
 
 fn settings_directory() -> Result<PathBuf> {
@@ -716,6 +1319,7 @@ impl eframe::App for RlGuiApp {
             match self.tab {
                 Tab::Harvester => self.ui_harvester(ui),
                 Tab::Replay2Json => self.ui_replay2json(ui),
+                Tab::Coach => self.ui_coach(ui),
             }
 
             self.ui_logs(ui);
@@ -941,6 +1545,70 @@ fn run_replay2json_task(
             }
             thread::sleep(Duration::from_secs(1));
         }
+    }
+
+    Ok(())
+}
+
+fn run_coach_task(
+    settings: CoachSettings,
+    tx: &mpsc::Sender<WorkerEvent>,
+    cancel: &AtomicBool,
+) -> Result<()> {
+    if settings.input_path.trim().is_empty() {
+        return Err(anyhow!("input path is required"));
+    }
+    if settings.output_dir.trim().is_empty() {
+        return Err(anyhow!("output directory is required"));
+    }
+    if cancel.load(Ordering::Relaxed) {
+        emit_log(tx, "rl-coach cancelled");
+        return Ok(());
+    }
+
+    let input_path = PathBuf::from(settings.input_path.trim());
+    let output_dir = PathBuf::from(settings.output_dir.trim());
+    let input_path = to_absolute_path(&input_path)?;
+    let output_dir = to_absolute_path(&output_dir)?;
+
+    emit_log(
+        tx,
+        format!(
+            "rl-coach started: mode={:?}, input={}, output={}, pretty={}",
+            settings.input_mode,
+            input_path.display(),
+            output_dir.display(),
+            settings.pretty_json
+        ),
+    );
+
+    let summary = coach_analyze_path(&input_path, &output_dir, settings.pretty_json)?;
+    if cancel.load(Ordering::Relaxed) {
+        emit_log(tx, "rl-coach cancelled");
+        return Ok(());
+    }
+
+    emit_log(
+        tx,
+        format!(
+            "rl-coach done: matches={}, team_aggregate={}, player_aggregate={}",
+            summary.matches.len(),
+            summary.team_aggregate.len(),
+            summary.player_aggregate.len()
+        ),
+    );
+
+    for manifest in summary.matches.iter().take(5) {
+        emit_log(
+            tx,
+            format!(
+                "report {} {}-{} {}",
+                manifest.replay_id,
+                manifest.final_score.blue,
+                manifest.final_score.orange,
+                manifest.report_path
+            ),
+        );
     }
 
     Ok(())
@@ -1640,4 +2308,106 @@ fn apply_github_auth(
     }
 
     request
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn coach_fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../rl-coach/tests/fixtures")
+            .join(name)
+    }
+
+    #[test]
+    fn saved_gui_settings_round_trip_preserves_coach() {
+        let settings = SavedGuiSettings {
+            harvester: HarvesterSettings::default(),
+            replay2json: Replay2JsonSettings::default(),
+            coach: CoachSettings {
+                input_mode: CoachInputMode::File,
+                input_path: "/tmp/input.json".to_string(),
+                output_dir: "/tmp/output".to_string(),
+                pretty_json: true,
+            },
+        };
+
+        let raw = serde_json::to_string(&settings).expect("serialize settings");
+        let decoded: SavedGuiSettings = serde_json::from_str(&raw).expect("deserialize settings");
+
+        assert_eq!(decoded.coach.input_mode, CoachInputMode::File);
+        assert_eq!(decoded.coach.input_path, "/tmp/input.json");
+        assert_eq!(decoded.coach.output_dir, "/tmp/output");
+        assert!(decoded.coach.pretty_json);
+    }
+
+    #[test]
+    fn running_task_maps_from_task_kind() {
+        assert_eq!(
+            RunningTask::from_task(&TaskKind::Coach(CoachSettings::default())),
+            RunningTask::Coach
+        );
+    }
+
+    #[test]
+    fn diagnosis_label_is_localized_for_japanese() {
+        assert_eq!(
+            localized_diagnosis_label(CoachDiagnosisLabel::DemoDisruption, Language::Japanese),
+            "デモ妨害"
+        );
+    }
+
+    #[test]
+    fn diagnosis_context_is_localized_for_japanese() {
+        assert_eq!(
+            localized_diagnosis_context(
+                "multiple defenders collapsed on the same ball in the defensive half",
+                Language::Japanese
+            ),
+            "自陣で複数人が同じボールに寄り過ぎた"
+        );
+    }
+
+    #[test]
+    fn metric_note_is_localized_for_japanese() {
+        assert_eq!(
+            localized_metric_note("derived from network frame sampling", Language::Japanese),
+            "network frame のサンプリングから算出"
+        );
+    }
+
+    #[test]
+    fn metric_value_display_is_localized_for_japanese() {
+        let value = CoachMetricValue {
+            value: Some(12.5),
+            quality: rl_coach::MetricQuality::Estimated,
+            note: Some("derived from network frame sampling".to_string()),
+        };
+
+        assert_eq!(
+            format_metric_value(&value, Language::Japanese),
+            "12.50 [推定] - network frame のサンプリングから算出"
+        );
+    }
+
+    #[test]
+    fn load_coach_view_reads_generated_reports() {
+        let input_dir = tempdir().expect("input tempdir");
+        let output_dir = tempdir().expect("output tempdir");
+        fs::copy(
+            coach_fixture("full_soccar.json"),
+            input_dir.path().join("full_soccar.json"),
+        )
+        .expect("copy fixture");
+
+        rl_coach::analyze_path(input_dir.path(), output_dir.path(), true).expect("analyze path");
+        let summary =
+            load_coach_view_from_output_dir(output_dir.path()).expect("load coach summary");
+
+        assert_eq!(summary.matches.len(), 1);
+        assert_eq!(summary.loaded_reports.len(), 1);
+        assert_eq!(summary.loaded_reports[0].meta.replay_id, "full_soccar");
+    }
 }

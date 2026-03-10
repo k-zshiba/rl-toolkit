@@ -1,0 +1,175 @@
+{
+  "game_type": "TAGame.Replay_Soccar_TA",
+  "properties": {
+    "Date": "2026-03-10",
+    "MapName": "DFHStadium",
+    "NumFrames": 5,
+    "Goals": [
+      {
+        "frame": 4,
+        "PlayerName": "OrangeOne",
+        "PlayerTeam": 1
+      }
+    ],
+    "PlayerStats": [
+      {
+        "PlayerName": "BlueOne",
+        "PlayerTeam": 0,
+        "Score": 100,
+        "Goals": 0,
+        "Assists": 0,
+        "Shots": 1,
+        "Saves": 0,
+        "Demolitions": 0,
+        "SelfDemolitions": 0
+      },
+      {
+        "PlayerName": "OrangeOne",
+        "PlayerTeam": 1,
+        "Score": 350,
+        "Goals": 1,
+        "Assists": 0,
+        "Shots": 2,
+        "Saves": 0,
+        "Demolitions": 1,
+        "SelfDemolitions": 0
+      }
+    ]
+  },
+  "levels": [
+    "DFHStadium"
+  ],
+  "objects": [
+    "Archetypes.Teams.Team0",
+    "Archetypes.Teams.Team1",
+    "TAGame.PRI_TA",
+    "Archetypes.Car.Car_Default",
+    "Archetypes.Ball.Ball_Default",
+    "Archetypes.CarComponents.CarComponent_Boost",
+    "Archetypes.GameEvent.GameEvent_Soccar",
+    "Engine.PlayerReplicationInfo:PlayerName",
+    "Engine.PlayerReplicationInfo:Team",
+    "Engine.Pawn:PlayerReplicationInfo",
+    "TAGame.CarComponent_TA:Vehicle",
+    "TAGame.CarComponent_Boost_TA:ReplicatedBoost",
+    "TAGame.RBActor_TA:ReplicatedRBState",
+    "TAGame.PRI_TA:MatchScore",
+    "TAGame.PRI_TA:MatchGoals",
+    "TAGame.PRI_TA:MatchAssists",
+    "TAGame.PRI_TA:MatchShots",
+    "TAGame.PRI_TA:MatchSaves",
+    "TAGame.PRI_TA:MatchDemolishes",
+    "TAGame.PRI_TA:SelfDemolitions",
+    "TAGame.Ball_TA:HitTeamNum",
+    "TAGame.Team_Soccar_TA:GameScore",
+    "TAGame.Car_TA:ReplicatedDemolish",
+    "TAGame.GameEvent_Soccar_TA:bOverTime"
+  ],
+  "names": [],
+  "network_frames": {
+    "frames": [
+      {
+        "time": 0.0,
+        "delta": 0.0,
+        "new_actors": [
+          { "actor_id": 100, "name_id": null, "object_id": 0, "initial_trajectory": { "location": null } },
+          { "actor_id": 101, "name_id": null, "object_id": 1, "initial_trajectory": { "location": null } },
+          { "actor_id": 200, "name_id": null, "object_id": 2, "initial_trajectory": { "location": null } },
+          { "actor_id": 201, "name_id": null, "object_id": 2, "initial_trajectory": { "location": null } },
+          { "actor_id": 300, "name_id": null, "object_id": 3, "initial_trajectory": { "location": { "x": 0, "y": -420000, "z": 1700 } } },
+          { "actor_id": 301, "name_id": null, "object_id": 3, "initial_trajectory": { "location": { "x": 0, "y": 100000, "z": 1700 } } },
+          { "actor_id": 400, "name_id": null, "object_id": 4, "initial_trajectory": { "location": { "x": 0, "y": -100000, "z": 9300 } } },
+          { "actor_id": 500, "name_id": null, "object_id": 5, "initial_trajectory": { "location": null } },
+          { "actor_id": 501, "name_id": null, "object_id": 5, "initial_trajectory": { "location": null } },
+          { "actor_id": 600, "name_id": null, "object_id": 6, "initial_trajectory": { "location": null } }
+        ],
+        "deleted_actors": [],
+        "updated_actors": [
+          { "actor_id": 200, "object_id": 7, "attribute": { "String": "BlueOne" } },
+          { "actor_id": 201, "object_id": 7, "attribute": { "String": "OrangeOne" } },
+          { "actor_id": 200, "object_id": 8, "attribute": { "ActiveActor": { "active": true, "actor": 100 } } },
+          { "actor_id": 201, "object_id": 8, "attribute": { "ActiveActor": { "active": true, "actor": 101 } } },
+          { "actor_id": 300, "object_id": 9, "attribute": { "ActiveActor": { "active": true, "actor": 200 } } },
+          { "actor_id": 301, "object_id": 9, "attribute": { "ActiveActor": { "active": true, "actor": 201 } } },
+          { "actor_id": 500, "object_id": 10, "attribute": { "ActiveActor": { "active": true, "actor": 300 } } },
+          { "actor_id": 501, "object_id": 10, "attribute": { "ActiveActor": { "active": true, "actor": 301 } } },
+          { "actor_id": 500, "object_id": 11, "attribute": { "ReplicatedBoost": { "grant_count": 0, "boost_amount": 30, "unused1": 0, "unused2": 0 } } },
+          { "actor_id": 501, "object_id": 11, "attribute": { "ReplicatedBoost": { "grant_count": 0, "boost_amount": 180, "unused1": 0, "unused2": 0 } } },
+          { "actor_id": 300, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": -4200, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 600, "y": 500, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 301, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": 1000, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 800, "y": -800, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 400, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": -1000, "z": 93 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 0, "y": -1500, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 200, "object_id": 13, "attribute": { "Int": 100 } },
+          { "actor_id": 201, "object_id": 13, "attribute": { "Int": 350 } },
+          { "actor_id": 200, "object_id": 14, "attribute": { "Int": 0 } },
+          { "actor_id": 201, "object_id": 14, "attribute": { "Int": 1 } },
+          { "actor_id": 200, "object_id": 15, "attribute": { "Int": 0 } },
+          { "actor_id": 201, "object_id": 15, "attribute": { "Int": 0 } },
+          { "actor_id": 200, "object_id": 16, "attribute": { "Int": 1 } },
+          { "actor_id": 201, "object_id": 16, "attribute": { "Int": 2 } },
+          { "actor_id": 200, "object_id": 17, "attribute": { "Int": 0 } },
+          { "actor_id": 201, "object_id": 17, "attribute": { "Int": 0 } },
+          { "actor_id": 200, "object_id": 18, "attribute": { "Int": 0 } },
+          { "actor_id": 201, "object_id": 18, "attribute": { "Int": 1 } },
+          { "actor_id": 200, "object_id": 19, "attribute": { "Int": 0 } },
+          { "actor_id": 201, "object_id": 19, "attribute": { "Int": 0 } },
+          { "actor_id": 100, "object_id": 21, "attribute": { "Int": 0 } },
+          { "actor_id": 101, "object_id": 21, "attribute": { "Int": 1 } },
+          { "actor_id": 600, "object_id": 23, "attribute": { "Boolean": false } }
+        ]
+      },
+      {
+        "time": 2.0,
+        "delta": 2.0,
+        "new_actors": [],
+        "deleted_actors": [],
+        "updated_actors": [
+          { "actor_id": 300, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": -4600, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 400, "y": 300, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 301, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": 400, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 400, "y": -700, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 400, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": -2500, "z": 93 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 0, "y": -1200, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 500, "object_id": 11, "attribute": { "ReplicatedBoost": { "grant_count": 0, "boost_amount": 12, "unused1": 0, "unused2": 0 } } },
+          { "actor_id": 501, "object_id": 11, "attribute": { "ReplicatedBoost": { "grant_count": 0, "boost_amount": 160, "unused1": 0, "unused2": 0 } } },
+          { "actor_id": 400, "object_id": 20, "attribute": { "Byte": 0 } }
+        ]
+      },
+      {
+        "time": 5.0,
+        "delta": 3.0,
+        "new_actors": [],
+        "deleted_actors": [],
+        "updated_actors": [
+          { "actor_id": 301, "object_id": 22, "attribute": { "Demolish": { "attacker_flag": true, "attacker": 301, "victim_flag": true, "victim": 300, "attack_velocity": { "x": 0, "y": -1200, "z": 0 }, "victim_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 300, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 300, "y": -5000, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 200, "y": 150, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 301, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": -300, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 300, "y": -600, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 400, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": -3900, "z": 93 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 0, "y": -900, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 500, "object_id": 11, "attribute": { "ReplicatedBoost": { "grant_count": 0, "boost_amount": 8, "unused1": 0, "unused2": 0 } } }
+        ]
+      },
+      {
+        "time": 9.0,
+        "delta": 4.0,
+        "new_actors": [],
+        "deleted_actors": [],
+        "updated_actors": [
+          { "actor_id": 300, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 500, "y": -5100, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 150, "y": 120, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 301, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": -1200, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 200, "y": -500, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 400, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": -5000, "z": 120 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 0, "y": -400, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 500, "object_id": 11, "attribute": { "ReplicatedBoost": { "grant_count": 0, "boost_amount": 4, "unused1": 0, "unused2": 0 } } },
+          { "actor_id": 400, "object_id": 20, "attribute": { "Byte": 0 } }
+        ]
+      },
+      {
+        "time": 10.0,
+        "delta": 1.0,
+        "new_actors": [],
+        "deleted_actors": [],
+        "updated_actors": [
+          { "actor_id": 300, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 600, "y": -5150, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 80, "y": 60, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 301, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": -1800, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 150, "y": -450, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 400, "object_id": 12, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": -5200, "z": 100 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 0, "y": -200, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } },
+          { "actor_id": 500, "object_id": 11, "attribute": { "ReplicatedBoost": { "grant_count": 0, "boost_amount": 2, "unused1": 0, "unused2": 0 } } },
+          { "actor_id": 101, "object_id": 21, "attribute": { "Int": 1 } }
+        ]
+      }
+    ]
+  }
+}
