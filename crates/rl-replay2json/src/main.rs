@@ -488,26 +488,66 @@ fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> 
 
 #[cfg(target_os = "windows")]
 fn replace_executable(current_exe: &Path, staged_path: &Path) -> Result<String> {
-    let mut script_name = current_exe.as_os_str().to_owned();
-    script_name.push(".update.cmd");
-    let script_path = PathBuf::from(script_name);
-
-    let script = format!(
-        "@echo off\r\n:retry\r\nmove /Y \"{}\" \"{}\" >nul 2>nul\r\nif errorlevel 1 (\r\n  timeout /T 1 /NOBREAK >nul\r\n  goto retry\r\n)\r\ndel \"%~f0\"\r\n",
-        staged_path.display(),
-        current_exe.display()
-    );
-
-    fs::write(&script_path, script)
-        .with_context(|| format!("failed to create updater script {}", script_path.display()))?;
-
-    Command::new("cmd")
-        .arg("/C")
-        .arg(&script_path)
-        .spawn()
-        .with_context(|| format!("failed to launch updater script {}", script_path.display()))?;
+    spawn_windows_replacer(current_exe, staged_path, false)?;
 
     Ok("update staged. restart this app to complete replacement".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_windows_replacer(current_exe: &Path, staged_path: &Path, relaunch: bool) -> Result<()> {
+    let current_literal = powershell_single_quoted(current_exe);
+    let staged_literal = powershell_single_quoted(staged_path);
+    let working_dir = current_exe.parent().unwrap_or(Path::new("."));
+    let working_literal = powershell_single_quoted(working_dir);
+    let relaunch_command = if relaunch {
+        "Start-Process -FilePath $current -WorkingDirectory $working;"
+    } else {
+        ""
+    };
+    let script = format!(
+        concat!(
+            "$ErrorActionPreference='Stop';",
+            "$current={current};",
+            "$staged={staged};",
+            "$working={working};",
+            "for($i=0; $i -lt 120; $i++) {{",
+            "  try {{",
+            "    Move-Item -LiteralPath $staged -Destination $current -Force;",
+            "    {relaunch}",
+            "    exit 0",
+            "  }} catch {{",
+            "    Start-Sleep -Milliseconds 500",
+            "  }}",
+            "}}",
+            "exit 1"
+        ),
+        current = current_literal,
+        staged = staged_literal,
+        working = working_literal,
+        relaunch = relaunch_command
+    );
+
+    Command::new("powershell.exe")
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-WindowStyle")
+        .arg("Hidden")
+        .arg("-Command")
+        .arg(script)
+        .spawn()
+        .with_context(|| {
+            format!(
+                "failed to launch Windows updater for {}",
+                current_exe.display()
+            )
+        })?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn powershell_single_quoted(path: &Path) -> String {
+    let escaped = path.as_os_str().to_string_lossy().replace('\'', "''");
+    format!("'{escaped}'")
 }
 
 fn github_api_get(client: &Client, url: &str) -> reqwest::blocking::RequestBuilder {
