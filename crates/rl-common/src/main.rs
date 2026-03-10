@@ -8,8 +8,7 @@ use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, Messag
 use rl_coach::{
     AnalysisReport as CoachAnalysisReport, BatchSummary as CoachBatchSummary,
     DiagnosisLabel as CoachDiagnosisLabel, MetricValue as CoachMetricValue,
-    analyze_path as coach_analyze_path,
-    load_reports as coach_load_reports,
+    analyze_path as coach_analyze_path, load_reports as coach_load_reports,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -414,13 +413,11 @@ impl RlGuiApp {
             self.active_task = None;
         }
 
-        if refresh_coach {
-            if let Err(err) = self.refresh_coach_view() {
-                self.logs.push(format!(
-                    "{}: {err}",
-                    self.tr("viewer refresh failed", "ビューア更新失敗")
-                ));
-            }
+        if refresh_coach && let Err(err) = self.refresh_coach_view() {
+            self.logs.push(format!(
+                "{}: {err}",
+                self.tr("viewer refresh failed", "ビューア更新失敗")
+            ));
         }
     }
 
@@ -454,7 +451,9 @@ impl RlGuiApp {
 
     fn selected_coach_report(&self) -> Option<&CoachAnalysisReport> {
         let summary = self.coach_view.summary.as_ref()?;
-        summary.loaded_reports.get(self.coach_view.selected_match_index)
+        summary
+            .loaded_reports
+            .get(self.coach_view.selected_match_index)
     }
 
     fn ui_header(&mut self, ui: &mut egui::Ui) {
@@ -690,7 +689,11 @@ impl RlGuiApp {
                     CoachInputMode::Directory => label_dir,
                 })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.coach.input_mode, CoachInputMode::File, label_file);
+                    ui.selectable_value(
+                        &mut self.coach.input_mode,
+                        CoachInputMode::File,
+                        label_file,
+                    );
                     ui.selectable_value(
                         &mut self.coach.input_mode,
                         CoachInputMode::Directory,
@@ -714,7 +717,12 @@ impl RlGuiApp {
         ) {
             settings_changed = true;
         }
-        if ui_folder_field(ui, label_output_dir, &mut self.coach.output_dir, label_browse) {
+        if ui_folder_field(
+            ui,
+            label_output_dir,
+            &mut self.coach.output_dir,
+            label_browse,
+        ) {
             settings_changed = true;
         }
         if ui
@@ -745,10 +753,10 @@ impl RlGuiApp {
             {
                 self.start_task(TaskKind::Coach(self.coach.clone()));
             }
-            if ui.button(button_refresh).clicked() {
-                if let Err(err) = self.refresh_coach_view() {
-                    self.coach_view.load_error = Some(err.to_string());
-                }
+            if ui.button(button_refresh).clicked()
+                && let Err(err) = self.refresh_coach_view()
+            {
+                self.coach_view.load_error = Some(err.to_string());
             }
         });
 
@@ -831,7 +839,10 @@ impl RlGuiApp {
                             manifest.map,
                             manifest.final_score.blue,
                             manifest.final_score.orange,
-                            manifest.winner.clone().unwrap_or_else(|| "draw".to_string()),
+                            manifest
+                                .winner
+                                .clone()
+                                .unwrap_or_else(|| "draw".to_string()),
                             format!("{:?}", manifest.parse_quality).to_lowercase(),
                             manifest.diagnosis_count
                         );
@@ -1072,13 +1083,15 @@ fn ui_metrics_table(
     metrics: &std::collections::BTreeMap<String, CoachMetricValue>,
     language: Language,
 ) {
-    egui::Grid::new(ui.next_auto_id()).striped(true).show(ui, |ui| {
-        for (name, value) in metrics {
-            ui.monospace(name);
-            ui.label(format_metric_value(value, language));
-            ui.end_row();
-        }
-    });
+    egui::Grid::new(ui.next_auto_id())
+        .striped(true)
+        .show(ui, |ui| {
+            for (name, value) in metrics {
+                ui.monospace(name);
+                ui.label(format_metric_value(value, language));
+                ui.end_row();
+            }
+        });
 }
 
 fn ui_coach_report_detail(ui: &mut egui::Ui, report: &CoachAnalysisReport, language: Language) {
@@ -1088,7 +1101,11 @@ fn ui_coach_report_detail(ui: &mut egui::Ui, report: &CoachAnalysisReport, langu
         report.meta.map,
         report.meta.final_score.blue,
         report.meta.final_score.orange,
-        report.meta.winner.clone().unwrap_or_else(|| "draw".to_string())
+        report
+            .meta
+            .winner
+            .clone()
+            .unwrap_or_else(|| "draw".to_string())
     ));
     ui.label(format!(
         "{}: {:?}",
@@ -1113,10 +1130,18 @@ fn ui_coach_report_detail(ui: &mut egui::Ui, report: &CoachAnalysisReport, langu
     }
 
     ui.separator();
-    ui.heading(tr_for_language(language, "Player Metrics", "プレイヤー指標"));
+    ui.heading(tr_for_language(
+        language,
+        "Player Metrics",
+        "プレイヤー指標",
+    ));
     for player in &report.player_metrics {
         ui.group(|ui| {
-            ui.label(format!("{} [{}]", player.player_name, team_name_label(player.team)));
+            ui.label(format!(
+                "{} [{}]",
+                player.player_name,
+                team_name_label(player.team)
+            ));
             ui_metrics_table(ui, &player.metrics, language);
         });
     }
@@ -1137,10 +1162,20 @@ fn ui_coach_report_detail(ui: &mut egui::Ui, report: &CoachAnalysisReport, langu
                     team_name_label_for_language(diagnosis.conceding_team, language);
                 let goal_header = match language {
                     Language::English => {
-                        format!("Goal {} | {} -> {}", diagnosis.goal_index + 1, scoring_team, conceding_team)
+                        format!(
+                            "Goal {} | {} -> {}",
+                            diagnosis.goal_index + 1,
+                            scoring_team,
+                            conceding_team
+                        )
                     }
                     Language::Japanese => {
-                        format!("ゴール {} | {} 得点 / {} 失点", diagnosis.goal_index + 1, scoring_team, conceding_team)
+                        format!(
+                            "ゴール {} | {} 得点 / {} 失点",
+                            diagnosis.goal_index + 1,
+                            scoring_team,
+                            conceding_team
+                        )
                     }
                 };
                 ui.label(goal_header);
@@ -1154,12 +1189,7 @@ fn ui_coach_report_detail(ui: &mut egui::Ui, report: &CoachAnalysisReport, langu
                         let metric = localized_diagnosis_metric(&evidence.metric, language);
                         let context =
                             localized_diagnosis_context(&evidence.frame_context, language);
-                        ui.monospace(format!(
-                            "{} | {} | {}",
-                            metric,
-                            evidence.value,
-                            context
-                        ));
+                        ui.monospace(format!("{} | {} | {}", metric, evidence.value, context));
                     }
                 }
             });
@@ -1170,15 +1200,13 @@ fn ui_coach_report_detail(ui: &mut egui::Ui, report: &CoachAnalysisReport, langu
 fn format_metric_value(value: &CoachMetricValue, language: Language) -> String {
     let quality = localized_metric_quality(value.quality, language);
     match value.value {
-        Some(number) if (number.fract()).abs() < 0.001 => {
-            match &value.note {
-                Some(note) => format!(
-                    "{number:.0} [{quality}] - {}",
-                    localized_metric_note(note, language)
-                ),
-                None => format!("{number:.0} [{quality}]"),
-            }
-        }
+        Some(number) if (number.fract()).abs() < 0.001 => match &value.note {
+            Some(note) => format!(
+                "{number:.0} [{quality}] - {}",
+                localized_metric_note(note, language)
+            ),
+            None => format!("{number:.0} [{quality}]"),
+        },
         Some(number) => match &value.note {
             Some(note) => format!(
                 "{number:.2} [{quality}] - {}",
@@ -1188,16 +1216,11 @@ fn format_metric_value(value: &CoachMetricValue, language: Language) -> String {
         },
         None => format!(
             "{} [{quality}]",
-            value.note
+            value
+                .note
                 .as_deref()
                 .map(|note| localized_metric_note(note, language))
-                .unwrap_or_else(|| {
-                    if language == Language::Japanese {
-                        "n/a".to_string()
-                    } else {
-                        "n/a".to_string()
-                    }
-                }),
+                .unwrap_or_else(|| "n/a".to_string()),
         ),
     }
 }
@@ -2331,10 +2354,7 @@ mod tests {
     #[test]
     fn diagnosis_label_is_localized_for_japanese() {
         assert_eq!(
-            localized_diagnosis_label(
-                CoachDiagnosisLabel::DemoDisruption,
-                Language::Japanese
-            ),
+            localized_diagnosis_label(CoachDiagnosisLabel::DemoDisruption, Language::Japanese),
             "デモ妨害"
         );
     }

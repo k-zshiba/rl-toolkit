@@ -189,7 +189,7 @@ fn parse_header_player_stats_entry(obj: &Map<String, Value>) -> Option<HeaderPla
     })
 }
 
-pub fn object_name<'a>(replay: &'a ReplayInput, object_id: i32) -> Option<&'a str> {
+pub fn object_name(replay: &ReplayInput, object_id: i32) -> Option<&str> {
     replay.objects.get(object_id as usize).map(String::as_str)
 }
 

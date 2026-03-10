@@ -13,12 +13,15 @@ use std::path::{Path, PathBuf};
 
 pub use crate::report::{
     ANALYSIS_VERSION, AnalysisReport, Availability, BatchSummary, ConcedeDiagnosis,
-    DiagnosisEvidence, DiagnosisLabel, DiagnosisLabelReport, GoalReport, MatchManifest,
-    MatchMeta, MetricQuality, MetricValue, ParseQuality, PlayerMetricsReport, ScoreLine,
-    TeamMetricsReport,
+    DiagnosisEvidence, DiagnosisLabel, DiagnosisLabelReport, GoalReport, MatchManifest, MatchMeta,
+    MetricQuality, MetricValue, ParseQuality, PlayerMetricsReport, ScoreLine, TeamMetricsReport,
 };
 
-pub fn analyze_file(input: impl AsRef<Path>, output_dir: impl AsRef<Path>, pretty: bool) -> Result<AnalysisReport> {
+pub fn analyze_file(
+    input: impl AsRef<Path>,
+    output_dir: impl AsRef<Path>,
+    pretty: bool,
+) -> Result<AnalysisReport> {
     let input = input.as_ref();
     if !input.is_file() {
         return Err(anyhow!("input path is not a file: {}", input.display()));
@@ -34,7 +37,11 @@ pub fn analyze_file(input: impl AsRef<Path>, output_dir: impl AsRef<Path>, prett
     Ok(report)
 }
 
-pub fn analyze_path(input: impl AsRef<Path>, output_dir: impl AsRef<Path>, pretty: bool) -> Result<BatchSummary> {
+pub fn analyze_path(
+    input: impl AsRef<Path>,
+    output_dir: impl AsRef<Path>,
+    pretty: bool,
+) -> Result<BatchSummary> {
     let input = input.as_ref();
     let output_dir = output_dir.as_ref();
     if input.is_file() {

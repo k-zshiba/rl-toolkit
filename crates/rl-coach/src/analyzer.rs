@@ -5,10 +5,9 @@ use crate::input::{
     variant,
 };
 use crate::report::{
-    ANALYSIS_VERSION, AnalysisReport, AnalysisSource, Availability, BatchSummary,
-    ConcedeDiagnosis, DiagnosisEvidence, DiagnosisLabel, DiagnosisLabelReport, GoalReport,
-    MatchManifest, MatchMeta, MetricQuality, MetricValue, ParseQuality, PlayerMetricsReport,
-    ScoreLine, TeamMetricsReport,
+    ANALYSIS_VERSION, AnalysisReport, AnalysisSource, Availability, BatchSummary, ConcedeDiagnosis,
+    DiagnosisEvidence, DiagnosisLabel, DiagnosisLabelReport, GoalReport, MatchManifest, MatchMeta,
+    MetricQuality, MetricValue, ParseQuality, PlayerMetricsReport, ScoreLine, TeamMetricsReport,
 };
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -77,7 +76,7 @@ struct PlayerStatsState {
     self_demos: Option<i32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct PlayerState {
     actor_id: i32,
     name: Option<String>,
@@ -86,20 +85,6 @@ struct PlayerState {
     boost_component: Option<i32>,
     unique_id: Option<String>,
     stats: PlayerStatsState,
-}
-
-impl Default for PlayerState {
-    fn default() -> Self {
-        Self {
-            actor_id: 0,
-            name: None,
-            team: None,
-            car_actor: None,
-            boost_component: None,
-            unique_id: None,
-            stats: PlayerStatsState::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -251,7 +236,10 @@ pub fn analyze_loaded_replay(path: &Path, replay: &ReplayInput) -> Result<Analys
         warnings.push("unsupported replay mode: only soccar is fully analyzed in v1".to_string());
     }
     if matches!(parse_quality, ParseQuality::HeaderOnly) {
-        warnings.push("network frames unavailable; derived metrics and concede diagnosis are omitted".to_string());
+        warnings.push(
+            "network frames unavailable; derived metrics and concede diagnosis are omitted"
+                .to_string(),
+        );
     }
 
     let duration = resolve_duration(replay, &runtime);
@@ -271,7 +259,7 @@ pub fn analyze_loaded_replay(path: &Path, replay: &ReplayInput) -> Result<Analys
 
     let overtime = runtime.overtime
         || property_bool(&replay.properties, &["bOverTime"])
-            .unwrap_or_else(|| duration > 300.0 && team_scores.blue == team_scores.orange);
+            .unwrap_or(duration > 300.0 && team_scores.blue == team_scores.orange);
 
     Ok(AnalysisReport {
         analysis_version: ANALYSIS_VERSION.to_string(),
@@ -326,7 +314,9 @@ fn build_runtime(replay: &ReplayInput, runtime: &mut MatchRuntime) {
     for frame in &frames.frames {
         for actor_id in &frame.deleted_actors {
             runtime.actors.remove(actor_id);
-            runtime.car_to_player.retain(|car, player| car != actor_id && player != actor_id);
+            runtime
+                .car_to_player
+                .retain(|car, player| car != actor_id && player != actor_id);
             runtime
                 .car_to_boost_component
                 .retain(|car, component| car != actor_id && component != actor_id);
@@ -360,9 +350,14 @@ fn build_runtime(replay: &ReplayInput, runtime: &mut MatchRuntime) {
                 ActorKind::Ball => runtime.ball_actor = Some(new_actor.actor_id),
                 ActorKind::GameEventSoccar => runtime.game_event_actor = Some(new_actor.actor_id),
                 ActorKind::Pri => {
-                    let mut player = runtime.players.remove(&new_actor.actor_id).unwrap_or_default();
+                    let mut player = runtime
+                        .players
+                        .remove(&new_actor.actor_id)
+                        .unwrap_or_default();
                     player.actor_id = new_actor.actor_id;
-                    player.name = player.name.or_else(|| name_from_id(replay, new_actor.name_id));
+                    player.name = player
+                        .name
+                        .or_else(|| name_from_id(replay, new_actor.name_id));
                     runtime.players.insert(new_actor.actor_id, player);
                 }
                 ActorKind::Team(team) => {
@@ -408,18 +403,23 @@ fn classify_actor_kind(object_name: &str) -> ActorKind {
     }
 }
 
-fn apply_update(replay: &ReplayInput, runtime: &mut MatchRuntime, updated: &UpdatedActorInput, time: f64) {
+fn apply_update(
+    replay: &ReplayInput,
+    runtime: &mut MatchRuntime,
+    updated: &UpdatedActorInput,
+    time: f64,
+) {
     let Some(property_name) = object_name(replay, updated.object_id) else {
         return;
     };
 
     match property_name {
         "TAGame.RBActor_TA:ReplicatedRBState" => {
-            if let Some((position, velocity)) = parse_rigid_body(&updated.attribute) {
-                if let Some(actor) = runtime.actors.get_mut(&updated.actor_id) {
-                    actor.position = Some(position);
-                    actor.velocity = velocity;
-                }
+            if let Some((position, velocity)) = parse_rigid_body(&updated.attribute)
+                && let Some(actor) = runtime.actors.get_mut(&updated.actor_id)
+            {
+                actor.position = Some(position);
+                actor.velocity = velocity;
             }
         }
         "Engine.PlayerReplicationInfo:PlayerName" => {
@@ -437,12 +437,12 @@ fn apply_update(replay: &ReplayInput, runtime: &mut MatchRuntime, updated: &Upda
             }
         }
         "Engine.PlayerReplicationInfo:Team" => {
-            if let Some(team_actor) = parse_active_actor(&updated.attribute) {
-                if let Some(team) = runtime.team_actor_to_num.get(&team_actor).copied() {
-                    let player = runtime.players.entry(updated.actor_id).or_default();
-                    player.actor_id = updated.actor_id;
-                    player.team = Some(team);
-                }
+            if let Some(team_actor) = parse_active_actor(&updated.attribute)
+                && let Some(team) = runtime.team_actor_to_num.get(&team_actor).copied()
+            {
+                let player = runtime.players.entry(updated.actor_id).or_default();
+                player.actor_id = updated.actor_id;
+                player.team = Some(team);
             }
         }
         "Engine.Pawn:PlayerReplicationInfo" => {
@@ -456,17 +456,17 @@ fn apply_update(replay: &ReplayInput, runtime: &mut MatchRuntime, updated: &Upda
             }
         }
         "TAGame.CarComponent_Boost_TA:ReplicatedBoost" => {
-            if let Some(boost) = parse_replicated_boost(&updated.attribute) {
-                if let Some(actor) = runtime.actors.get_mut(&updated.actor_id) {
-                    actor.boost = Some(boost);
-                }
+            if let Some(boost) = parse_replicated_boost(&updated.attribute)
+                && let Some(actor) = runtime.actors.get_mut(&updated.actor_id)
+            {
+                actor.boost = Some(boost);
             }
         }
         "TAGame.CarComponent_Boost_TA:ReplicatedBoostAmount" => {
-            if let Some(boost) = variant(&updated.attribute, "Byte").and_then(value_u8) {
-                if let Some(actor) = runtime.actors.get_mut(&updated.actor_id) {
-                    actor.boost = Some(boost_to_percent(boost));
-                }
+            if let Some(boost) = variant(&updated.attribute, "Byte").and_then(value_u8)
+                && let Some(actor) = runtime.actors.get_mut(&updated.actor_id)
+            {
+                actor.boost = Some(boost_to_percent(boost));
             }
         }
         "TAGame.Ball_TA:HitTeamNum"
@@ -481,20 +481,54 @@ fn apply_update(replay: &ReplayInput, runtime: &mut MatchRuntime, updated: &Upda
                 runtime.overtime = value;
             }
         }
-        "TAGame.PRI_TA:MatchScore" => set_player_stat(runtime, updated.actor_id, |stats, value| stats.score = Some(value), &updated.attribute),
-        "TAGame.PRI_TA:MatchGoals" => set_player_stat(runtime, updated.actor_id, |stats, value| stats.goals = Some(value), &updated.attribute),
-        "TAGame.PRI_TA:MatchAssists" => set_player_stat(runtime, updated.actor_id, |stats, value| stats.assists = Some(value), &updated.attribute),
-        "TAGame.PRI_TA:MatchShots" => set_player_stat(runtime, updated.actor_id, |stats, value| stats.shots = Some(value), &updated.attribute),
-        "TAGame.PRI_TA:MatchSaves" => set_player_stat(runtime, updated.actor_id, |stats, value| stats.saves = Some(value), &updated.attribute),
-        "TAGame.PRI_TA:MatchDemolishes" | "TAGame.PRI_TA:CarDemolitions" => {
-            set_player_stat(runtime, updated.actor_id, |stats, value| stats.demos = Some(value), &updated.attribute)
-        }
-        "TAGame.PRI_TA:SelfDemolitions" => {
-            set_player_stat(runtime, updated.actor_id, |stats, value| stats.self_demos = Some(value), &updated.attribute)
-        }
-        "Engine.PlayerReplicationInfo:Score" => {
-            set_player_stat(runtime, updated.actor_id, |stats, value| stats.score = Some(value), &updated.attribute)
-        }
+        "TAGame.PRI_TA:MatchScore" => set_player_stat(
+            runtime,
+            updated.actor_id,
+            |stats, value| stats.score = Some(value),
+            &updated.attribute,
+        ),
+        "TAGame.PRI_TA:MatchGoals" => set_player_stat(
+            runtime,
+            updated.actor_id,
+            |stats, value| stats.goals = Some(value),
+            &updated.attribute,
+        ),
+        "TAGame.PRI_TA:MatchAssists" => set_player_stat(
+            runtime,
+            updated.actor_id,
+            |stats, value| stats.assists = Some(value),
+            &updated.attribute,
+        ),
+        "TAGame.PRI_TA:MatchShots" => set_player_stat(
+            runtime,
+            updated.actor_id,
+            |stats, value| stats.shots = Some(value),
+            &updated.attribute,
+        ),
+        "TAGame.PRI_TA:MatchSaves" => set_player_stat(
+            runtime,
+            updated.actor_id,
+            |stats, value| stats.saves = Some(value),
+            &updated.attribute,
+        ),
+        "TAGame.PRI_TA:MatchDemolishes" | "TAGame.PRI_TA:CarDemolitions" => set_player_stat(
+            runtime,
+            updated.actor_id,
+            |stats, value| stats.demos = Some(value),
+            &updated.attribute,
+        ),
+        "TAGame.PRI_TA:SelfDemolitions" => set_player_stat(
+            runtime,
+            updated.actor_id,
+            |stats, value| stats.self_demos = Some(value),
+            &updated.attribute,
+        ),
+        "Engine.PlayerReplicationInfo:Score" => set_player_stat(
+            runtime,
+            updated.actor_id,
+            |stats, value| stats.score = Some(value),
+            &updated.attribute,
+        ),
         "TAGame.Team_Soccar_TA:GameScore" | "Engine.TeamInfo:Score" => {
             if let Some(score) = variant(&updated.attribute, "Int").and_then(value_i32)
                 && let Some(team) = runtime.team_actor_to_num.get(&updated.actor_id).copied()
@@ -507,7 +541,11 @@ fn apply_update(replay: &ReplayInput, runtime: &mut MatchRuntime, updated: &Upda
         | "TAGame.Car_TA:ReplicatedDemolish_CustomFX"
         | "TAGame.Car_TA:ReplicatedDemolishGoalExplosion" => {
             if let Some((attacker, victim)) = parse_demo_pair(&updated.attribute) {
-                let key = ((time * 10.0).round() as i32, attacker.unwrap_or(-1), victim.unwrap_or(-1));
+                let key = (
+                    (time * 10.0).round() as i32,
+                    attacker.unwrap_or(-1),
+                    victim.unwrap_or(-1),
+                );
                 if runtime.demo_keys.insert(key) {
                     runtime.demos.push(DemoEvent {
                         time,
@@ -549,14 +587,18 @@ fn link_player_to_car(runtime: &mut MatchRuntime, player_actor: i32, car_actor: 
     player.car_actor = Some(car_actor);
     runtime.car_to_player.insert(car_actor, player_actor);
 
-    if let Some(boost_component) = runtime.car_to_boost_component.get(&car_actor).copied() {
-        if let Some(player) = runtime.players.get_mut(&player_actor) {
-            player.boost_component = Some(boost_component);
-        }
+    if let Some(boost_component) = runtime.car_to_boost_component.get(&car_actor).copied()
+        && let Some(player) = runtime.players.get_mut(&player_actor)
+    {
+        player.boost_component = Some(boost_component);
     }
 }
 
-fn link_boost_component_to_car(runtime: &mut MatchRuntime, boost_component_actor: i32, car_actor: i32) {
+fn link_boost_component_to_car(
+    runtime: &mut MatchRuntime,
+    boost_component_actor: i32,
+    car_actor: i32,
+) {
     runtime
         .car_to_boost_component
         .retain(|_, component| *component != boost_component_actor);
@@ -564,10 +606,10 @@ fn link_boost_component_to_car(runtime: &mut MatchRuntime, boost_component_actor
         .car_to_boost_component
         .insert(car_actor, boost_component_actor);
 
-    if let Some(player_actor) = runtime.car_to_player.get(&car_actor).copied() {
-        if let Some(player) = runtime.players.get_mut(&player_actor) {
-            player.boost_component = Some(boost_component_actor);
-        }
+    if let Some(player_actor) = runtime.car_to_player.get(&car_actor).copied()
+        && let Some(player) = runtime.players.get_mut(&player_actor)
+    {
+        player.boost_component = Some(boost_component_actor);
     }
 }
 
@@ -604,7 +646,11 @@ fn snapshot_players(runtime: &MatchRuntime) -> Vec<PlayerFrameState> {
     }
 
     players.sort_by(|left, right| {
-        (left.team, left.name.as_str(), left.player_actor).cmp(&(right.team, right.name.as_str(), right.player_actor))
+        (left.team, left.name.as_str(), left.player_actor).cmp(&(
+            right.team,
+            right.name.as_str(),
+            right.player_actor,
+        ))
     });
     players
 }
@@ -663,9 +709,7 @@ fn parse_demo_pair(attribute: &Value) -> Option<(Option<i32>, Option<i32>)> {
     }
     if let Some(value) = variant(attribute, "DemolishExtended").and_then(Value::as_object) {
         return Some((
-            value
-                .get("attacker")
-                .and_then(parse_nested_active_actor),
+            value.get("attacker").and_then(parse_nested_active_actor),
             value.get("victim").and_then(parse_nested_active_actor),
         ));
     }
@@ -707,7 +751,9 @@ fn resolve_duration(replay: &ReplayInput, runtime: &MatchRuntime) -> f64 {
         .snapshots
         .last()
         .map(|snapshot| snapshot.time)
-        .or_else(|| property_i32(&replay.properties, &["NumFrames"]).map(|frames| frames as f64 / 30.0))
+        .or_else(|| {
+            property_i32(&replay.properties, &["NumFrames"]).map(|frames| frames as f64 / 30.0)
+        })
         .unwrap_or(0.0)
 }
 
@@ -816,7 +862,11 @@ fn compute_derived_metrics(
             snapshot
                 .players
                 .iter()
-                .filter_map(|player| player.position.map(|position| (player.player_actor, position.distance(ball))))
+                .filter_map(|player| {
+                    player
+                        .position
+                        .map(|position| (player.player_actor, position.distance(ball)))
+                })
                 .min_by(|left, right| left.1.partial_cmp(&right.1).unwrap_or(Ordering::Equal))
                 .map(|(player_actor, _)| player_actor)
         });
@@ -829,7 +879,9 @@ fn compute_derived_metrics(
 
             let speed = match (player.speed, accumulator.last_position, player.position) {
                 (Some(speed), _, _) => Some(speed),
-                (None, Some(previous), Some(current)) if dt > 0.0 => Some(previous.distance(current) / dt),
+                (None, Some(previous), Some(current)) if dt > 0.0 => {
+                    Some(previous.distance(current) / dt)
+                }
                 _ => None,
             };
             if let Some(speed) = speed {
@@ -900,7 +952,10 @@ fn compute_derived_metrics(
                 .map(|player| player.team);
             if let Some(team) = team {
                 let team_key = team_aggregate_actor_id(team);
-                accumulators.entry(team_key).or_default().closest_to_ball_time += dt;
+                accumulators
+                    .entry(team_key)
+                    .or_default()
+                    .closest_to_ball_time += dt;
             }
         }
     }
@@ -924,7 +979,7 @@ fn build_player_reports(
         insert_count_metric(&mut metrics, "saves", player.stats.saves);
         insert_count_metric(&mut metrics, "demos", player.stats.demos);
         insert_count_metric(&mut metrics, "self_demos", player.stats.self_demos);
-        insert_derived_metrics(&mut metrics, &player.derived, parse_quality, duration, false);
+        insert_derived_metrics(&mut metrics, &player.derived, parse_quality, duration);
 
         reports.push(PlayerMetricsReport {
             player_name: player.player_name.clone(),
@@ -936,7 +991,9 @@ fn build_player_reports(
         });
     }
 
-    reports.sort_by(|left, right| (left.team, left.player_name.as_str()).cmp(&(right.team, right.player_name.as_str())));
+    reports.sort_by(|left, right| {
+        (left.team, left.player_name.as_str()).cmp(&(right.team, right.player_name.as_str()))
+    });
     reports
 }
 
@@ -951,7 +1008,10 @@ fn build_team_reports(
 
     for team in [0_u8, 1_u8] {
         let mut metrics = BTreeMap::new();
-        let relevant_players: Vec<_> = player_metrics.iter().filter(|player| player.team == team).collect();
+        let relevant_players: Vec<_> = player_metrics
+            .iter()
+            .filter(|player| player.team == team)
+            .collect();
         for metric_name in metric_names() {
             let aggregated = aggregate_metric_values(
                 relevant_players
@@ -964,7 +1024,11 @@ fn build_team_reports(
             metrics.insert(metric_name.to_string(), aggregated);
         }
 
-        let score_value = if team == 0 { team_scores.blue } else { team_scores.orange };
+        let score_value = if team == 0 {
+            team_scores.blue
+        } else {
+            team_scores.orange
+        };
         metrics.insert("goals".to_string(), MetricValue::exact(score_value as f64));
 
         reports.push(TeamMetricsReport {
@@ -976,7 +1040,10 @@ fn build_team_reports(
         });
     }
 
-    if matches!(parse_quality, ParseQuality::HeaderOnly | ParseQuality::Unsupported) {
+    if matches!(
+        parse_quality,
+        ParseQuality::HeaderOnly | ParseQuality::Unsupported
+    ) {
         for report in &mut reports {
             for metric_name in derived_metric_names() {
                 report.metrics.insert(
@@ -989,7 +1056,10 @@ fn build_team_reports(
 
     if let Some(winner) = team_winners {
         let winning_team = if winner == "blue" { 0 } else { 1 };
-        if let Some(report) = reports.iter_mut().find(|report| report.team == winning_team) {
+        if let Some(report) = reports
+            .iter_mut()
+            .find(|report| report.team == winning_team)
+        {
             report.wins = Some(1);
         }
     }
@@ -997,8 +1067,13 @@ fn build_team_reports(
     reports
 }
 
-fn build_goal_reports(goals: &[HeaderGoal], replay: &ReplayInput, team_scores: &ScoreLine) -> Vec<GoalReport> {
-    goals.iter()
+fn build_goal_reports(
+    goals: &[HeaderGoal],
+    replay: &ReplayInput,
+    team_scores: &ScoreLine,
+) -> Vec<GoalReport> {
+    goals
+        .iter()
         .enumerate()
         .map(|(index, goal)| GoalReport {
             goal_index: index,
@@ -1024,8 +1099,13 @@ fn goal_time(goal: &HeaderGoal, replay: &ReplayInput) -> Option<f64> {
         .or_else(|| Some(frame as f64 / 30.0))
 }
 
-fn build_diagnoses(goals: &[GoalReport], runtime: &MatchRuntime, duration: f64) -> Vec<ConcedeDiagnosis> {
-    goals.iter()
+fn build_diagnoses(
+    goals: &[GoalReport],
+    runtime: &MatchRuntime,
+    duration: f64,
+) -> Vec<ConcedeDiagnosis> {
+    goals
+        .iter()
         .enumerate()
         .filter_map(|(index, goal)| {
             let goal_time = goal.time?;
@@ -1089,7 +1169,12 @@ fn diagnose_goal(context: &GoalDiagnosisContext<'_>) -> Vec<DiagnosisLabelReport
         labels.push(label);
     }
 
-    labels.sort_by(|left, right| right.score.partial_cmp(&left.score).unwrap_or(Ordering::Equal));
+    labels.sort_by(|left, right| {
+        right
+            .score
+            .partial_cmp(&left.score)
+            .unwrap_or(Ordering::Equal)
+    });
     labels.truncate(3);
     labels
 }
@@ -1113,17 +1198,16 @@ fn diagnose_kickoff_breakdown(context: &GoalDiagnosisContext<'_>) -> Option<Diag
             team: Some(team_name(context.goal.scoring_team).to_string()),
             metric: "goal_after_kickoff_seconds".to_string(),
             value: format!("{kickoff_delta:.1}"),
-            frame_context: "goal arrived before either team settled after kickoff reset".to_string(),
+            frame_context: "goal arrived before either team settled after kickoff reset"
+                .to_string(),
         }],
     })
 }
 
 fn diagnose_failed_clear(context: &GoalDiagnosisContext<'_>) -> Option<DiagnosisLabelReport> {
-    let latest_touch = context
-        .touches
-        .iter()
-        .rev()
-        .find(|touch| touch.team == context.goal.conceding_team && context.goal_time - touch.time <= 3.0)?;
+    let latest_touch = context.touches.iter().rev().find(|touch| {
+        touch.team == context.goal.conceding_team && context.goal_time - touch.time <= 3.0
+    })?;
     let ball_in_defense = context
         .window
         .iter()
@@ -1152,11 +1236,10 @@ fn diagnose_failed_clear(context: &GoalDiagnosisContext<'_>) -> Option<Diagnosis
 }
 
 fn diagnose_demo_disruption(context: &GoalDiagnosisContext<'_>) -> Option<DiagnosisLabelReport> {
-    let demo = context
-        .demos
-        .iter()
-        .rev()
-        .find(|demo| demo.victim_team == Some(context.goal.conceding_team) && context.goal_time - demo.time <= 5.0)?;
+    let demo = context.demos.iter().rev().find(|demo| {
+        demo.victim_team == Some(context.goal.conceding_team)
+            && context.goal_time - demo.time <= 5.0
+    })?;
 
     Some(DiagnosisLabelReport {
         label: DiagnosisLabel::DemoDisruption,
@@ -1169,7 +1252,9 @@ fn diagnose_demo_disruption(context: &GoalDiagnosisContext<'_>) -> Option<Diagno
             value: format!("{:.1}", context.goal_time - demo.time),
             frame_context: format!(
                 "{} was removed from the play before the goal",
-                demo.victim_player.clone().unwrap_or_else(|| "a defender".to_string())
+                demo.victim_player
+                    .clone()
+                    .unwrap_or_else(|| "a defender".to_string())
             ),
         }],
     })
@@ -1179,7 +1264,9 @@ fn diagnose_low_boost_defense(context: &GoalDiagnosisContext<'_>) -> Option<Diag
     let recent_window: Vec<_> = context
         .window
         .iter()
-        .filter(|snapshot| snapshot.time >= context.goal_time - 3.0 && snapshot.time <= context.goal_time)
+        .filter(|snapshot| {
+            snapshot.time >= context.goal_time - 3.0 && snapshot.time <= context.goal_time
+        })
         .collect();
     if recent_window.is_empty() {
         return None;
@@ -1188,7 +1275,11 @@ fn diagnose_low_boost_defense(context: &GoalDiagnosisContext<'_>) -> Option<Diag
     let mut boost_sum = 0.0;
     let mut samples = 0usize;
     for snapshot in recent_window {
-        for player in snapshot.players.iter().filter(|player| player.team == context.goal.conceding_team) {
+        for player in snapshot
+            .players
+            .iter()
+            .filter(|player| player.team == context.goal.conceding_team)
+        {
             if let Some(boost) = player.boost {
                 boost_sum += boost;
                 samples += 1;
@@ -1214,17 +1305,16 @@ fn diagnose_low_boost_defense(context: &GoalDiagnosisContext<'_>) -> Option<Diag
             team: Some(team_name(context.goal.conceding_team).to_string()),
             metric: "average_defender_boost".to_string(),
             value: format!("{average_boost:.1}"),
-            frame_context: "defending team entered the goal sequence with low average boost".to_string(),
+            frame_context: "defending team entered the goal sequence with low average boost"
+                .to_string(),
         }],
     })
 }
 
 fn diagnose_double_commit(context: &GoalDiagnosisContext<'_>) -> Option<DiagnosisLabelReport> {
-    let snapshot = context
-        .window
-        .iter()
-        .rev()
-        .find(|snapshot| snapshot.time <= context.goal_time && snapshot.time >= context.goal_time - 2.0)?;
+    let snapshot = context.window.iter().rev().find(|snapshot| {
+        snapshot.time <= context.goal_time && snapshot.time >= context.goal_time - 2.0
+    })?;
     let ball = snapshot.ball_position?;
     if !is_defensive_half(context.goal.conceding_team, ball.y) {
         return None;
@@ -1253,23 +1343,29 @@ fn diagnose_double_commit(context: &GoalDiagnosisContext<'_>) -> Option<Diagnosi
             team: Some(team_name(context.goal.conceding_team).to_string()),
             metric: "defenders_near_ball".to_string(),
             value: committed.len().to_string(),
-            frame_context: "multiple defenders collapsed on the same ball in the defensive half".to_string(),
+            frame_context: "multiple defenders collapsed on the same ball in the defensive half"
+                .to_string(),
         }],
     })
 }
 
 fn diagnose_rotation_gap(context: &GoalDiagnosisContext<'_>) -> Option<DiagnosisLabelReport> {
-    let snapshot = context
-        .window
-        .iter()
-        .rev()
-        .find(|snapshot| snapshot.time <= context.goal_time && snapshot.time >= context.goal_time - 2.5)?;
+    let snapshot = context.window.iter().rev().find(|snapshot| {
+        snapshot.time <= context.goal_time && snapshot.time >= context.goal_time - 2.5
+    })?;
 
     let defenders: Vec<_> = snapshot
         .players
         .iter()
         .filter(|player| player.team == context.goal.conceding_team)
-        .filter_map(|player| player.position.map(|position| (player.name.clone(), distance_to_own_goal(player.team, position))))
+        .filter_map(|player| {
+            player.position.map(|position| {
+                (
+                    player.name.clone(),
+                    distance_to_own_goal(player.team, position),
+                )
+            })
+        })
         .collect();
 
     if defenders.is_empty() {
@@ -1293,7 +1389,9 @@ fn diagnose_rotation_gap(context: &GoalDiagnosisContext<'_>) -> Option<Diagnosis
             team: Some(team_name(context.goal.conceding_team).to_string()),
             metric: "closest_defender_to_own_goal".to_string(),
             value: format!("{min_distance:.0}"),
-            frame_context: "no defender was close enough to cover the goal line during the final approach".to_string(),
+            frame_context:
+                "no defender was close enough to cover the goal line during the final approach"
+                    .to_string(),
         }],
     })
 }
@@ -1302,7 +1400,9 @@ fn diagnose_rebound_pressure(context: &GoalDiagnosisContext<'_>) -> Option<Diagn
     let relevant: Vec<_> = context
         .window
         .iter()
-        .filter(|snapshot| snapshot.time >= context.goal_time - 6.0 && snapshot.time <= context.goal_time)
+        .filter(|snapshot| {
+            snapshot.time >= context.goal_time - 6.0 && snapshot.time <= context.goal_time
+        })
         .collect();
     if relevant.is_empty() {
         return None;
@@ -1342,7 +1442,9 @@ fn diagnose_rebound_pressure(context: &GoalDiagnosisContext<'_>) -> Option<Diagn
             team: Some(team_name(context.goal.scoring_team).to_string()),
             metric: "sustained_pressure_seconds".to_string(),
             value: format!("{defensive_time:.1}"),
-            frame_context: "the ball stayed in the defending third under sustained attacking pressure".to_string(),
+            frame_context:
+                "the ball stayed in the defending third under sustained attacking pressure"
+                    .to_string(),
         }],
     })
 }
@@ -1373,7 +1475,11 @@ fn winner_from_score(score: &ScoreLine) -> Option<String> {
     }
 }
 
-fn insert_count_metric(metrics: &mut BTreeMap<String, MetricValue>, name: &str, value: Option<i32>) {
+fn insert_count_metric(
+    metrics: &mut BTreeMap<String, MetricValue>,
+    name: &str,
+    value: Option<i32>,
+) {
     let metric = match value {
         Some(value) => MetricValue::exact(value as f64),
         None => MetricValue::unavailable("header or PRI stat unavailable"),
@@ -1386,7 +1492,6 @@ fn insert_derived_metrics(
     derived: &DerivedAccumulator,
     parse_quality: ParseQuality,
     duration: f64,
-    is_team: bool,
 ) {
     if !matches!(parse_quality, ParseQuality::Full) {
         for metric_name in derived_metric_names() {
@@ -1401,7 +1506,11 @@ fn insert_derived_metrics(
     let note = "derived from network frame sampling";
     metrics.insert(
         "avg_speed".to_string(),
-        maybe_estimated(derived.speed_samples > 0.0, derived.speed_time_sum / derived.speed_samples, note),
+        maybe_estimated(
+            derived.speed_samples > 0.0,
+            derived.speed_time_sum / derived.speed_samples,
+            note,
+        ),
     );
     metrics.insert(
         "supersonic_time".to_string(),
@@ -1413,7 +1522,11 @@ fn insert_derived_metrics(
     );
     metrics.insert(
         "avg_boost".to_string(),
-        maybe_estimated(derived.boost_time > 0.0, derived.boost_sum / derived.boost_time, note),
+        maybe_estimated(
+            derived.boost_time > 0.0,
+            derived.boost_sum / derived.boost_time,
+            note,
+        ),
     );
     metrics.insert(
         "low_boost_time".to_string(),
@@ -1439,14 +1552,22 @@ fn insert_derived_metrics(
         "defensive_half_time".to_string(),
         maybe_estimated(derived.sample_time > 0.0, derived.defensive_half_time, note),
     );
-    let ratio_denominator = if is_team { duration.max(1.0) } else { duration.max(1.0) };
+    let ratio_denominator = duration.max(1.0);
     metrics.insert(
         "closest_to_ball_proxy".to_string(),
-        maybe_estimated(duration > 0.0, derived.closest_to_ball_time / ratio_denominator, note),
+        maybe_estimated(
+            duration > 0.0,
+            derived.closest_to_ball_time / ratio_denominator,
+            note,
+        ),
     );
     metrics.insert(
         "pressure_proxy".to_string(),
-        maybe_estimated(duration > 0.0, derived.pressure_time / ratio_denominator, note),
+        maybe_estimated(
+            duration > 0.0,
+            derived.pressure_time / ratio_denominator,
+            note,
+        ),
     );
 }
 
@@ -1541,7 +1662,9 @@ fn derived_metric_names() -> &'static [&'static str] {
 
 fn metric_behavior(metric: &str) -> MetricBehavior {
     match metric {
-        "avg_speed" | "avg_boost" | "closest_to_ball_proxy" | "pressure_proxy" => MetricBehavior::Average,
+        "avg_speed" | "avg_boost" | "closest_to_ball_proxy" | "pressure_proxy" => {
+            MetricBehavior::Average
+        }
         _ => MetricBehavior::Sum,
     }
 }
@@ -1600,11 +1723,18 @@ pub fn build_batch_summary(reports: Vec<AnalysisReport>) -> BatchSummary {
             winner: report.meta.winner.clone(),
             final_score: report.meta.final_score.clone(),
             parse_quality: report.availability.parse_quality,
-            diagnosis_count: report.concede_diagnoses.iter().map(|diagnosis| diagnosis.labels.len()).sum(),
+            diagnosis_count: report
+                .concede_diagnoses
+                .iter()
+                .map(|diagnosis| diagnosis.labels.len())
+                .sum(),
             report_path: String::new(),
         })
         .collect();
-    summary.warnings = reports.iter().flat_map(|report| report.warnings.clone()).collect();
+    summary.warnings = reports
+        .iter()
+        .flat_map(|report| report.warnings.clone())
+        .collect();
     summary.team_aggregate = aggregate_teams(&reports);
     summary.player_aggregate = aggregate_players(&reports);
     summary
@@ -1654,7 +1784,10 @@ fn aggregate_players(reports: &[AnalysisReport]) -> Vec<PlayerMetricsReport> {
 
     for report in reports {
         for player in &report.player_metrics {
-            grouped.entry(player.player_name.clone()).or_default().push(player);
+            grouped
+                .entry(player.player_name.clone())
+                .or_default()
+                .push(player);
             if let Some(winner) = &report.meta.winner {
                 let team = if winner == "blue" { 0 } else { 1 };
                 if player.team == team {
@@ -1753,7 +1886,11 @@ fn collect_json_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-pub fn report_output_path(output_dir: &Path, input_file: &Path, report: &AnalysisReport) -> PathBuf {
+pub fn report_output_path(
+    output_dir: &Path,
+    input_file: &Path,
+    report: &AnalysisReport,
+) -> PathBuf {
     let file_name = input_file
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -1829,8 +1966,22 @@ mod tests {
         let snapshots = vec![FrameSnapshot {
             time: 10.0,
             delta: 1.0,
-            ball_position: Some(Vec3 { x: 0.0, y: -5000.0, z: 0.0 }),
-            players: vec![player(1, "BlueOne", 0, Vec3 { x: 0.0, y: -4500.0, z: 0.0 }, Some(10.0))],
+            ball_position: Some(Vec3 {
+                x: 0.0,
+                y: -5000.0,
+                z: 0.0,
+            }),
+            players: vec![player(
+                1,
+                "BlueOne",
+                0,
+                Vec3 {
+                    x: 0.0,
+                    y: -4500.0,
+                    z: 0.0,
+                },
+                Some(10.0),
+            )],
         }];
         let demos = vec![];
         let touches = vec![TouchEvent { time: 9.5, team: 0 }];
@@ -1863,14 +2014,42 @@ mod tests {
             FrameSnapshot {
                 time: 8.0,
                 delta: 1.0,
-                ball_position: Some(Vec3 { x: 0.0, y: -4300.0, z: 0.0 }),
-                players: vec![player(1, "BlueOne", 0, Vec3 { x: 0.0, y: -4200.0, z: 0.0 }, Some(8.0))],
+                ball_position: Some(Vec3 {
+                    x: 0.0,
+                    y: -4300.0,
+                    z: 0.0,
+                }),
+                players: vec![player(
+                    1,
+                    "BlueOne",
+                    0,
+                    Vec3 {
+                        x: 0.0,
+                        y: -4200.0,
+                        z: 0.0,
+                    },
+                    Some(8.0),
+                )],
             },
             FrameSnapshot {
                 time: 10.0,
                 delta: 1.0,
-                ball_position: Some(Vec3 { x: 0.0, y: -5100.0, z: 0.0 }),
-                players: vec![player(1, "BlueOne", 0, Vec3 { x: 0.0, y: -5000.0, z: 0.0 }, Some(6.0))],
+                ball_position: Some(Vec3 {
+                    x: 0.0,
+                    y: -5100.0,
+                    z: 0.0,
+                }),
+                players: vec![player(
+                    1,
+                    "BlueOne",
+                    0,
+                    Vec3 {
+                        x: 0.0,
+                        y: -5000.0,
+                        z: 0.0,
+                    },
+                    Some(6.0),
+                )],
             },
         ];
         let demos = vec![];
@@ -1885,10 +2064,34 @@ mod tests {
         let snapshots = vec![FrameSnapshot {
             time: 9.5,
             delta: 1.0,
-            ball_position: Some(Vec3 { x: 0.0, y: -4800.0, z: 0.0 }),
+            ball_position: Some(Vec3 {
+                x: 0.0,
+                y: -4800.0,
+                z: 0.0,
+            }),
             players: vec![
-                player(1, "BlueOne", 0, Vec3 { x: 100.0, y: -4700.0, z: 0.0 }, Some(20.0)),
-                player(2, "BlueTwo", 0, Vec3 { x: -100.0, y: -4700.0, z: 0.0 }, Some(30.0)),
+                player(
+                    1,
+                    "BlueOne",
+                    0,
+                    Vec3 {
+                        x: 100.0,
+                        y: -4700.0,
+                        z: 0.0,
+                    },
+                    Some(20.0),
+                ),
+                player(
+                    2,
+                    "BlueTwo",
+                    0,
+                    Vec3 {
+                        x: -100.0,
+                        y: -4700.0,
+                        z: 0.0,
+                    },
+                    Some(30.0),
+                ),
             ],
         }];
         let demos = vec![];
@@ -1903,8 +2106,22 @@ mod tests {
         let snapshots = vec![FrameSnapshot {
             time: 9.0,
             delta: 1.0,
-            ball_position: Some(Vec3 { x: 0.0, y: -3000.0, z: 0.0 }),
-            players: vec![player(1, "BlueOne", 0, Vec3 { x: 0.0, y: 1000.0, z: 0.0 }, Some(40.0))],
+            ball_position: Some(Vec3 {
+                x: 0.0,
+                y: -3000.0,
+                z: 0.0,
+            }),
+            players: vec![player(
+                1,
+                "BlueOne",
+                0,
+                Vec3 {
+                    x: 0.0,
+                    y: 1000.0,
+                    z: 0.0,
+                },
+                Some(40.0),
+            )],
         }];
         let demos = vec![];
         let touches = vec![];
@@ -1919,20 +2136,62 @@ mod tests {
             FrameSnapshot {
                 time: 5.0,
                 delta: 2.0,
-                ball_position: Some(Vec3 { x: 0.0, y: -4200.0, z: 0.0 }),
-                players: vec![player(3, "OrangeOne", 1, Vec3 { x: 0.0, y: -3500.0, z: 0.0 }, Some(50.0))],
+                ball_position: Some(Vec3 {
+                    x: 0.0,
+                    y: -4200.0,
+                    z: 0.0,
+                }),
+                players: vec![player(
+                    3,
+                    "OrangeOne",
+                    1,
+                    Vec3 {
+                        x: 0.0,
+                        y: -3500.0,
+                        z: 0.0,
+                    },
+                    Some(50.0),
+                )],
             },
             FrameSnapshot {
                 time: 8.0,
                 delta: 2.0,
-                ball_position: Some(Vec3 { x: 0.0, y: -5000.0, z: 0.0 }),
-                players: vec![player(3, "OrangeOne", 1, Vec3 { x: 0.0, y: -4100.0, z: 0.0 }, Some(50.0))],
+                ball_position: Some(Vec3 {
+                    x: 0.0,
+                    y: -5000.0,
+                    z: 0.0,
+                }),
+                players: vec![player(
+                    3,
+                    "OrangeOne",
+                    1,
+                    Vec3 {
+                        x: 0.0,
+                        y: -4100.0,
+                        z: 0.0,
+                    },
+                    Some(50.0),
+                )],
             },
             FrameSnapshot {
                 time: 10.0,
                 delta: 1.0,
-                ball_position: Some(Vec3 { x: 0.0, y: -5100.0, z: 0.0 }),
-                players: vec![player(3, "OrangeOne", 1, Vec3 { x: 0.0, y: -4300.0, z: 0.0 }, Some(50.0))],
+                ball_position: Some(Vec3 {
+                    x: 0.0,
+                    y: -5100.0,
+                    z: 0.0,
+                }),
+                players: vec![player(
+                    3,
+                    "OrangeOne",
+                    1,
+                    Vec3 {
+                        x: 0.0,
+                        y: -4300.0,
+                        z: 0.0,
+                    },
+                    Some(50.0),
+                )],
             },
         ];
         let demos = vec![];
