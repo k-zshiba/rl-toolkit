@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/rl-common",
+    "crates/rl-coach",
     "crates/rl-replay-harvester",
     "crates/rl-replay2json",
 ]

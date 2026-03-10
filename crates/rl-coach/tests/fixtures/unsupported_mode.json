@@ -1,0 +1,26 @@
+{
+  "game_type": "TAGame.Replay_Basketball_TA",
+  "properties": {
+    "Date": "2026-03-08",
+    "MapName": "DunkHouse",
+    "Goals": [
+      { "frame": 1200, "PlayerName": "HoopsHero", "PlayerTeam": 1 }
+    ],
+    "PlayerStats": [
+      {
+        "PlayerName": "HoopsHero",
+        "PlayerTeam": 1,
+        "Score": 520,
+        "Goals": 1,
+        "Assists": 0,
+        "Shots": 3,
+        "Saves": 0,
+        "Demolitions": 0,
+        "SelfDemolitions": 0
+      }
+    ]
+  },
+  "levels": ["DunkHouse"],
+  "objects": [],
+  "names": []
+}

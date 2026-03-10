@@ -1,0 +1,70 @@
+{
+  "game_type": "TAGame.Replay_Soccar_TA",
+  "properties": {
+    "Date": "2026-03-10",
+    "MapName": "ChampionsField",
+    "NumFrames": 2,
+    "Goals": [],
+    "PlayerStats": [
+      {
+        "PlayerName": "BlueOne",
+        "PlayerTeam": 0,
+        "Score": 0,
+        "Goals": 0,
+        "Assists": 0,
+        "Shots": 0,
+        "Saves": 0,
+        "Demolitions": 0,
+        "SelfDemolitions": 0
+      }
+    ]
+  },
+  "levels": ["ChampionsField"],
+  "objects": [
+    "Archetypes.Teams.Team0",
+    "TAGame.PRI_TA",
+    "Archetypes.Car.Car_Default",
+    "Archetypes.CarComponents.CarComponent_Boost",
+    "Archetypes.Ball.Ball_Default",
+    "Engine.PlayerReplicationInfo:PlayerName",
+    "Engine.PlayerReplicationInfo:Team",
+    "Engine.Pawn:PlayerReplicationInfo",
+    "TAGame.CarComponent_TA:Vehicle",
+    "TAGame.CarComponent_Boost_TA:ReplicatedBoost",
+    "TAGame.RBActor_TA:ReplicatedRBState"
+  ],
+  "names": [],
+  "network_frames": {
+    "frames": [
+      {
+        "time": 0.0,
+        "delta": 0.0,
+        "new_actors": [
+          { "actor_id": 100, "name_id": null, "object_id": 0, "initial_trajectory": { "location": null } },
+          { "actor_id": 200, "name_id": null, "object_id": 1, "initial_trajectory": { "location": null } },
+          { "actor_id": 300, "name_id": null, "object_id": 2, "initial_trajectory": { "location": { "x": 0, "y": -100000, "z": 1700 } } },
+          { "actor_id": 500, "name_id": null, "object_id": 3, "initial_trajectory": { "location": null } },
+          { "actor_id": 400, "name_id": null, "object_id": 4, "initial_trajectory": { "location": { "x": 0, "y": 0, "z": 9300 } } } 
+        ],
+        "deleted_actors": [],
+        "updated_actors": [
+          { "actor_id": 500, "object_id": 8, "attribute": { "ActiveActor": { "active": true, "actor": 300 } } },
+          { "actor_id": 500, "object_id": 9, "attribute": { "ReplicatedBoost": { "grant_count": 0, "boost_amount": 128, "unused1": 0, "unused2": 0 } } },
+          { "actor_id": 200, "object_id": 5, "attribute": { "String": "BlueOne" } },
+          { "actor_id": 200, "object_id": 6, "attribute": { "ActiveActor": { "active": true, "actor": 100 } } },
+          { "actor_id": 300, "object_id": 7, "attribute": { "ActiveActor": { "active": true, "actor": 200 } } },
+          { "actor_id": 300, "object_id": 10, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 0, "y": -1000, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 500, "y": 0, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } }
+        ]
+      },
+      {
+        "time": 1.0,
+        "delta": 1.0,
+        "new_actors": [],
+        "deleted_actors": [],
+        "updated_actors": [
+          { "actor_id": 300, "object_id": 10, "attribute": { "RigidBody": { "sleeping": false, "location": { "x": 500, "y": -1000, "z": 17 }, "rotation": { "x": 0, "y": 0, "z": 0, "w": 1 }, "linear_velocity": { "x": 500, "y": 0, "z": 0 }, "angular_velocity": { "x": 0, "y": 0, "z": 0 } } } }
+        ]
+      }
+    ]
+  }
+}

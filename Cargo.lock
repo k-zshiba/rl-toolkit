@@ -774,6 +774,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link 0.1.3",
 ]
@@ -3095,8 +3096,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rl-coach"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "rl-common"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "boxcars",
@@ -3104,14 +3117,16 @@ dependencies = [
  "eframe",
  "reqwest",
  "rfd",
+ "rl-coach",
  "semver",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
 name = "rl-replay-harvester"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3123,7 +3138,7 @@ dependencies = [
 
 [[package]]
 name = "rl-replay2json"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "boxcars",
