@@ -9,6 +9,7 @@ Japanese guide: [README.ja.md](./README.ja.md)
 A desktop GUI application that provides both:
 - replay harvesting via ballchasing API
 - replay-to-json conversion via `boxcars`
+- replay JSON analysis via `rl-coach`
 
 ### Usage
 
@@ -36,6 +37,11 @@ Notes:
   - `Browse...` buttons for input/output folder selection
   - one-shot conversion or watch mode
   - writes JSON to `json/{yyyy-mm-dd}/{replay_filename}.json`
+- RL Coach tab:
+  - single JSON file or directory input
+  - output directory input and analysis viewer refresh
+  - batch aggregate, match list, and per-match diagnosis viewer
+  - writes analysis to `analysis/{yyyy-mm-dd}/{replay_id}.json`
 
 ## rl-replay-harvester
 
@@ -97,6 +103,40 @@ Notes:
 - the process keeps running and polls every 10 seconds
 - only newly detected replay files are converted during runtime
 
+## rl-coach
+
+A CLI tool that analyzes replay JSON exported by `rl-replay2json`.
+
+### Usage
+
+```bash
+cargo run -p rl-coach -- \
+  --input /path/to/json-or-directory \
+  --output-dir /path/to/output \
+  --pretty-json
+```
+
+### Arguments
+
+- `--input`, `-i` (required): one replay JSON file or a directory to scan recursively
+- `--output-dir`, `-o` (required): base directory for analysis results
+- `--pretty-json` (optional): write pretty-printed analysis JSON
+
+### Output layout
+
+The output format is:
+
+`analysis/{yyyy-mm-dd}/{replay_id}.json`
+
+Directory input also writes:
+
+`analysis/summary.json`
+
+Notes:
+- v1 fully supports Soccar replay JSON
+- header-only JSON still produces score/stat summaries, but derived spatial/boost metrics become unavailable
+- concede diagnosis uses a fixed 10-second window around each goal
+
 ## Version Update Check and Self-Update
 
 All binaries check on startup whether a newer version exists on GitHub Releases:
@@ -146,6 +186,7 @@ Direct command equivalent:
 cross build --release \
   --target x86_64-pc-windows-gnu \
   -p rl-common \
+  -p rl-coach \
   -p rl-replay-harvester \
   -p rl-replay2json
 ```
@@ -172,6 +213,7 @@ rustup target add aarch64-apple-darwin # or x86_64-apple-darwin
 cargo build --release \
   --target aarch64-apple-darwin \
   -p rl-common \
+  -p rl-coach \
   -p rl-replay-harvester \
   -p rl-replay2json
 ```

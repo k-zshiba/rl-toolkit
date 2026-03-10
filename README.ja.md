@@ -1,6 +1,6 @@
 # rl-toolkit 日本語ガイド
 
-このリポジトリは、Rocket League のリプレイ収集と変換を行うツール群です。
+このリポジトリは、Rocket League のリプレイ収集・変換・分析を行うツール群です。
 
 ## rl-common (GUI)
 
@@ -23,6 +23,10 @@ cargo run -p rl-common
   - `.replay` を JSON に変換
   - `Input Dir` / `Output Dir` は `Browse...` ボタンでフォルダ選択可能
   - 監視モードで追加ファイルを継続変換可能
+- RL Coach タブ
+  - 単一 JSON またはディレクトリを入力可能
+  - 出力先指定とビューア更新に対応
+  - 全体集計、試合一覧、失点診断を GUI 上で閲覧可能
 
 ### 補足
 
@@ -82,6 +86,41 @@ json/{yyyy-mm-dd}/{replay_filename}.json
 - 入力ディレクトリは再帰的に探索
 - 10 秒ごとに新規ファイルを検知して継続変換
 
+## rl-coach (CLI)
+
+`rl-replay2json` が出力した JSON を分析する CLI ツールです。
+
+### 実行例
+
+```bash
+cargo run -p rl-coach -- \
+  --input /path/to/json-or-directory \
+  --output-dir /path/to/output \
+  --pretty-json
+```
+
+### 引数
+
+- `--input`, `-i`（必須）: 単一の replay JSON か、再帰走査するディレクトリ
+- `--output-dir`, `-o`（必須）: 分析結果の出力先ベースディレクトリ
+- `--pretty-json`（任意）: 整形済み JSON で出力
+
+### 出力形式
+
+```text
+analysis/{yyyy-mm-dd}/{replay_id}.json
+```
+
+ディレクトリ入力時は追加で以下も出力します。
+
+```text
+analysis/summary.json
+```
+
+- v1 で正式対応するのは Soccar 系 JSON のみ
+- network frame が無い header-only JSON でもスコア/基本集計は出力
+- 失点診断は各ゴールの前後 10 秒窓を固定で使います
+
 ## バージョン更新チェックと自己更新
 
 以下のバイナリは起動時に GitHub Releases の latest を参照して、更新可能かを確認します。
@@ -124,6 +163,7 @@ json/{yyyy-mm-dd}/{replay_filename}.json
 cross build --release \
   --target x86_64-pc-windows-gnu \
   -p rl-common \
+  -p rl-coach \
   -p rl-replay-harvester \
   -p rl-replay2json
 ```
@@ -150,6 +190,7 @@ rustup target add aarch64-apple-darwin # または x86_64-apple-darwin
 cargo build --release \
   --target aarch64-apple-darwin \
   -p rl-common \
+  -p rl-coach \
   -p rl-replay-harvester \
   -p rl-replay2json
 ```

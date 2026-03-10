@@ -1,0 +1,469 @@
+{
+  "analysis_version": "1",
+  "source": {
+    "input_path": "<input>"
+  },
+  "meta": {
+    "replay_id": "full_soccar",
+    "date": "2026-03-10",
+    "map": "DFHStadium",
+    "mode": "TAGame.Replay_Soccar_TA",
+    "duration": 10.0,
+    "overtime": false,
+    "final_score": {
+      "blue": 0,
+      "orange": 1
+    },
+    "winner": "orange"
+  },
+  "availability": {
+    "parse_quality": "full",
+    "supported_mode": true,
+    "network_frames": true,
+    "diagnostics": true
+  },
+  "team_metrics": [
+    {
+      "team": 0,
+      "name": "Blue",
+      "metrics": {
+        "assists": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "avg_boost": {
+          "value": 2.588235294117647,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "avg_speed": {
+          "value": 261.8374908491942,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "boost_gained": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "boost_spent": {
+          "value": 3.9215686274509807,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "closest_to_ball_proxy": {
+          "value": 1.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "defensive_half_time": {
+          "value": 10.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "demos": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "distance_traveled": {
+          "value": 835.4101966249685,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "empty_boost_time": {
+          "value": 1.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "goals": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "low_boost_time": {
+          "value": 10.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "offensive_half_time": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "pressure_proxy": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "saves": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "score": {
+          "value": 100.0,
+          "quality": "exact"
+        },
+        "self_demos": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "shots": {
+          "value": 1.0,
+          "quality": "exact"
+        },
+        "supersonic_time": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        }
+      }
+    },
+    {
+      "team": 1,
+      "name": "Orange",
+      "wins": 1,
+      "metrics": {
+        "assists": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "avg_boost": {
+          "value": 62.74509803921568,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "avg_speed": {
+          "value": 625.3320301288579,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "boost_gained": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "boost_spent": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "closest_to_ball_proxy": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "defensive_half_time": {
+          "value": 2.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "demos": {
+          "value": 1.0,
+          "quality": "exact"
+        },
+        "distance_traveled": {
+          "value": 2200.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "empty_boost_time": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "goals": {
+          "value": 1.0,
+          "quality": "exact"
+        },
+        "low_boost_time": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "offensive_half_time": {
+          "value": 8.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "pressure_proxy": {
+          "value": 0.1,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        },
+        "saves": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "score": {
+          "value": 350.0,
+          "quality": "exact"
+        },
+        "self_demos": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "shots": {
+          "value": 2.0,
+          "quality": "exact"
+        },
+        "supersonic_time": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "aggregated across analyzed matches"
+        }
+      }
+    }
+  ],
+  "player_metrics": [
+    {
+      "player_name": "BlueOne",
+      "team": 0,
+      "metrics": {
+        "assists": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "avg_boost": {
+          "value": 2.588235294117647,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "avg_speed": {
+          "value": 261.8374908491942,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "boost_gained": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "boost_spent": {
+          "value": 3.9215686274509807,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "closest_to_ball_proxy": {
+          "value": 1.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "defensive_half_time": {
+          "value": 10.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "demos": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "distance_traveled": {
+          "value": 835.4101966249685,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "empty_boost_time": {
+          "value": 1.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "goals": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "low_boost_time": {
+          "value": 10.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "offensive_half_time": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "pressure_proxy": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "saves": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "score": {
+          "value": 100.0,
+          "quality": "exact"
+        },
+        "self_demos": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "shots": {
+          "value": 1.0,
+          "quality": "exact"
+        },
+        "supersonic_time": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        }
+      }
+    },
+    {
+      "player_name": "OrangeOne",
+      "team": 1,
+      "metrics": {
+        "assists": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "avg_boost": {
+          "value": 62.74509803921568,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "avg_speed": {
+          "value": 625.3320301288579,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "boost_gained": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "boost_spent": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "closest_to_ball_proxy": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "defensive_half_time": {
+          "value": 2.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "demos": {
+          "value": 1.0,
+          "quality": "exact"
+        },
+        "distance_traveled": {
+          "value": 2200.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "empty_boost_time": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "goals": {
+          "value": 1.0,
+          "quality": "exact"
+        },
+        "low_boost_time": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "offensive_half_time": {
+          "value": 8.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "pressure_proxy": {
+          "value": 0.1,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        },
+        "saves": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "score": {
+          "value": 350.0,
+          "quality": "exact"
+        },
+        "self_demos": {
+          "value": 0.0,
+          "quality": "exact"
+        },
+        "shots": {
+          "value": 2.0,
+          "quality": "exact"
+        },
+        "supersonic_time": {
+          "value": 0.0,
+          "quality": "estimated",
+          "note": "derived from network frame sampling"
+        }
+      }
+    }
+  ],
+  "goals": [
+    {
+      "goal_index": 0,
+      "frame": 4,
+      "time": 10.0,
+      "scorer_name": "OrangeOne",
+      "scoring_team": 1,
+      "conceding_team": 0
+    }
+  ],
+  "concede_diagnoses": [
+    {
+      "goal_index": 0,
+      "scoring_team": 1,
+      "conceding_team": 0,
+      "window_start": 0.0,
+      "window_end": 10.0,
+      "labels": [
+        {
+          "label": "kickoff_breakdown",
+          "score": 0.95,
+          "evidence": [
+            {
+              "timestamp": 10.0,
+              "player": "OrangeOne",
+              "team": "Orange",
+              "metric": "goal_after_kickoff_seconds",
+              "value": "10.0",
+              "frame_context": "goal arrived before either team settled after kickoff reset"
+            }
+          ]
+        },
+        {
+          "label": "failed_clear",
+          "score": 0.82,
+          "evidence": [
+            {
+              "timestamp": 9.0,
+              "team": "Blue",
+              "metric": "last_touch_before_goal_seconds",
+              "value": "1.0",
+              "frame_context": "defending team touched the ball shortly before conceding but did not exit the defensive half"
+            }
+          ]
+        },
+        {
+          "label": "demo_disruption",
+          "score": 0.78,
+          "evidence": [
+            {
+              "timestamp": 5.0,
+              "player": "BlueOne",
+              "team": "Blue",
+              "metric": "demo_before_goal_seconds",
+              "value": "5.0",
+              "frame_context": "BlueOne was removed from the play before the goal"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}
