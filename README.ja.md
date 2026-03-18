@@ -2,6 +2,22 @@
 
 このリポジトリは、Rocket League のリプレイ収集・変換・分析を行うツール群です。
 
+## GitHub Pages
+
+Issue #22 では、`rl-coach` の出力を GitHub Pages 上で閲覧するためのビューアを追加しました。
+
+- Web アプリは静的な HTML / CSS / JavaScript のみで動作します。
+- `rl-coach` が生成した `analysis/*.json` または `analysis/summary.json` をアップロードすると、ブラウザ上で内容を確認できます。
+- BallChasing API を使うリプレイ収集機能は、静的サイトでは扱いにくいため GitHub Pages 版には含めていません。
+
+Pages ビューアのローカル確認方法:
+
+```bash
+python -m http.server 8000 --directory web
+```
+
+その後、`http://localhost:8000/` を開いてください。
+
 ## rl-common (GUI)
 
 `rl-common` クレートは GUI アプリです。生成されるバイナリ名は `rl-toolkit`（Windows では `rl-toolkit.exe`）です。
