@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>rl-toolkit Pages</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <p class="eyebrow">GitHub Pages</p>
+        <h1>rl-toolkit in your browser</h1>
+        <p class="lede">
+          Explore <code>rl-coach</code> analysis output locally in the browser with
+          a static viewer designed for GitHub Pages.
+        </p>
+      </header>
+
+      <section class="card">
+        <h2>How it works</h2>
+        <ol>
+          <li>Run <code>rl-coach</code> locally to produce <code>analysis/*.json</code> or <code>analysis/summary.json</code>.</li>
+          <li>Upload one of those JSON files below.</li>
+          <li>Review the generated report or batch summary without sending data to a server.</li>
+        </ol>
+        <p class="note">
+          Replay harvesting is intentionally omitted here because GitHub Pages cannot
+          safely perform BallChasing API access.
+        </p>
+      </section>
+
+      <section class="card">
+        <label class="upload">
+          <span>Select analysis JSON</span>
+          <input id="file-input" type="file" accept=".json,application/json" />
+        </label>
+        <p id="status" class="status">Choose an <code>rl-coach</code> output JSON file to begin.</p>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <h2 id="summary-title">Match summary</h2>
+          <dl id="summary" class="summary empty"></dl>
+        </article>
+
+        <article class="card">
+          <h2>Warnings</h2>
+          <ul id="warnings" class="list empty">
+            <li>No analysis yet.</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="grid">
+        <article class="card">
+          <h2 id="players-title">Players</h2>
+          <div id="players" class="table-wrap empty">No analysis yet.</div>
+        </article>
+
+        <article class="card">
+          <h2 id="diagnoses-title">Concede diagnoses</h2>
+          <div id="diagnoses" class="stack empty">No analysis yet.</div>
+        </article>
+      </section>
+
+      <section class="card">
+        <h2 id="raw-title">Raw JSON</h2>
+        <pre id="raw-output" class="code empty">No analysis yet.</pre>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
