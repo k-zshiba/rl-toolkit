@@ -3,8 +3,10 @@ use boxcars::{NetworkParse, ParserBuilder};
 use chrono::{DateTime, Utc};
 use clap::Parser;
 use reqwest::blocking::Client;
+use rl_coach::write_position_timeline_file;
 use semver::Version;
 use serde::Deserialize;
+use serde_json::json;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -49,7 +51,10 @@ struct Args {
 
 #[derive(Debug)]
 enum ConvertStatus {
-    Converted(PathBuf),
+    Converted {
+        path: PathBuf,
+        network_parse_error: Option<String>,
+    },
     AlreadyExists(PathBuf),
 }
 
@@ -104,10 +109,18 @@ fn run_scan(input_dir: &Path, output_dir: &Path, processed: &mut HashSet<PathBuf
         }
 
         match convert_replay_file(&replay_path, input_dir, output_dir) {
-            Ok(ConvertStatus::Converted(path)) => {
+            Ok(ConvertStatus::Converted {
+                path,
+                network_parse_error,
+            }) => {
                 converted += 1;
                 processed.insert(replay_path);
                 println!("{}", path.display());
+                if let Some(err) = network_parse_error {
+                    eprintln!(
+                        "warning: network parse failed; wrote header-only fallback JSON: {err}"
+                    );
+                }
             }
             Ok(ConvertStatus::AlreadyExists(path)) => {
                 skipped += 1;
@@ -171,31 +184,52 @@ fn convert_replay_file(
     let date_segment = resolve_date_segment(replay_path, input_dir)?;
     let output_path = output_dir
         .join("json")
+        .join(&date_segment)
+        .join(format!("{replay_id}.json"));
+    let timeline_path = output_dir
+        .join("timeline")
         .join(date_segment)
-        .join(format!("{replay_id}.replay"));
+        .join(format!("{replay_id}.positions.json"));
 
-    if output_path.exists() {
+    if output_path.exists() && timeline_path.exists() {
         return Ok(ConvertStatus::AlreadyExists(output_path));
     }
 
-    let data = fs::read(replay_path)
-        .with_context(|| format!("failed to read replay file {}", replay_path.display()))?;
-    let replay = parse_replay(&data)
-        .with_context(|| format!("failed to parse replay file {}", replay_path.display()))?;
-    let json_bytes = serde_json::to_vec(&replay).context("failed to serialize replay to JSON")?;
+    let mut network_parse_error = None;
+    if !output_path.exists() {
+        let data = fs::read(replay_path)
+            .with_context(|| format!("failed to read replay file {}", replay_path.display()))?;
+        let parsed = parse_replay(&data)
+            .with_context(|| format!("failed to parse replay file {}", replay_path.display()))?;
+        let json_bytes =
+            serialize_replay_json(&parsed, false).context("failed to serialize replay to JSON")?;
+        network_parse_error = parsed.network_parse_error.clone();
 
-    let parent = output_path.parent().ok_or_else(|| {
-        anyhow!(
-            "failed to resolve output directory for {}",
-            output_path.display()
-        )
-    })?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create output directory {}", parent.display()))?;
-    fs::write(&output_path, json_bytes)
-        .with_context(|| format!("failed to write json file {}", output_path.display()))?;
+        let parent = output_path.parent().ok_or_else(|| {
+            anyhow!(
+                "failed to resolve output directory for {}",
+                output_path.display()
+            )
+        })?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory {}", parent.display()))?;
+        fs::write(&output_path, json_bytes)
+            .with_context(|| format!("failed to write json file {}", output_path.display()))?;
+    }
 
-    Ok(ConvertStatus::Converted(output_path))
+    if !timeline_path.exists() {
+        write_position_timeline_file(&output_path, &timeline_path, false).with_context(|| {
+            format!(
+                "failed to write position timeline {}",
+                timeline_path.display()
+            )
+        })?;
+    }
+
+    Ok(ConvertStatus::Converted {
+        path: output_path,
+        network_parse_error,
+    })
 }
 
 fn replay_id_from_path(path: &Path) -> Result<String> {
@@ -258,22 +292,57 @@ fn is_ymd_segment(value: &str) -> bool {
             .all(|(index, ch)| index == 4 || index == 7 || ch.is_ascii_digit())
 }
 
-fn parse_replay(data: &[u8]) -> Result<boxcars::Replay> {
+#[derive(Debug)]
+struct ParsedReplay {
+    replay: boxcars::Replay,
+    network_parse_error: Option<String>,
+}
+
+fn parse_replay(data: &[u8]) -> Result<ParsedReplay> {
     match ParserBuilder::new(data)
         .with_network_parse(NetworkParse::Always)
         .on_error_check_crc()
         .parse()
     {
-        Ok(replay) => Ok(replay),
+        Ok(replay) => Ok(ParsedReplay {
+            replay,
+            network_parse_error: None,
+        }),
         Err(network_err) => ParserBuilder::new(data)
             .with_network_parse(NetworkParse::Never)
             .on_error_check_crc()
             .parse()
+            .map(|replay| ParsedReplay {
+                replay,
+                network_parse_error: Some(network_err.to_string()),
+            })
             .with_context(|| {
                 format!(
                     "network parse failed then fallback parse failed; first error: {network_err}"
                 )
             }),
+    }
+}
+
+fn serialize_replay_json(parsed: &ParsedReplay, pretty: bool) -> Result<Vec<u8>> {
+    let mut value =
+        serde_json::to_value(&parsed.replay).context("failed to serialize replay to JSON value")?;
+    if let Some(err) = &parsed.network_parse_error
+        && let Some(obj) = value.as_object_mut()
+    {
+        obj.insert(
+            "_rl_toolkit".to_string(),
+            json!({
+                "network_parse_fallback": true,
+                "network_parse_error": err
+            }),
+        );
+    }
+
+    if pretty {
+        serde_json::to_vec_pretty(&value).context("failed to serialize replay JSON")
+    } else {
+        serde_json::to_vec(&value).context("failed to serialize replay JSON")
     }
 }
 

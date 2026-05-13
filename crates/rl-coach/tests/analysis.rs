@@ -1,6 +1,11 @@
 use anyhow::Result;
-use rl_coach::{MetricQuality, ParseQuality, analyze_file, analyze_path, load_reports};
+use rl_coach::{
+    MetricQuality, ParseQuality, TimelinePlayer, analyze_file, analyze_path,
+    build_gemini_match_payload, build_gemini_match_payload_for_player,
+    build_position_timeline_file, list_replay_players, load_reports,
+};
 use serde_json::Value;
+use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -77,6 +82,28 @@ fn header_only_fixture_marks_derived_metrics_unavailable() -> Result<()> {
             .iter()
             .any(|warning| warning.contains("network frames unavailable"))
     );
+    Ok(())
+}
+
+#[test]
+fn replay_metadata_network_parse_error_becomes_report_warning() -> Result<()> {
+    let input_dir = tempdir()?;
+    let output_dir = tempdir()?;
+    let input_path = input_dir.path().join("fallback.json");
+    let mut value: Value = serde_json::from_str(&fs::read_to_string(fixture_path(
+        "header_only_soccar.json",
+    ))?)?;
+    value["_rl_toolkit"] = json!({
+        "network_parse_fallback": true,
+        "network_parse_error": "unknown attribute id 123"
+    });
+    fs::write(&input_path, serde_json::to_vec(&value)?)?;
+
+    let report = analyze_file(&input_path, output_dir.path(), true)?;
+
+    assert!(report.warnings.iter().any(|warning| {
+        warning.contains("network parse failed") && warning.contains("unknown attribute id 123")
+    }));
     Ok(())
 }
 
@@ -190,5 +217,94 @@ fn full_report_snapshot_matches_expected_schema() -> Result<()> {
         "expected_full_report.json",
     ))?)?;
     assert_eq!(actual, expected);
+    Ok(())
+}
+
+#[test]
+fn position_timeline_contains_ball_and_player_frames() -> Result<()> {
+    let timeline = build_position_timeline_file(&fixture_path("full_soccar.json"))?;
+
+    assert_eq!(timeline.meta.replay_id, "full_soccar");
+    assert!(!timeline.players.is_empty());
+    assert!(
+        timeline
+            .frames
+            .iter()
+            .any(|frame| frame.ball_position.is_some())
+    );
+    assert!(
+        timeline
+            .frames
+            .iter()
+            .any(|frame| frame.players.iter().any(|player| player.position.is_some()))
+    );
+    Ok(())
+}
+
+#[test]
+fn gemini_payload_is_compact_and_uses_pre_goal_windows() -> Result<()> {
+    let payload = build_gemini_match_payload(&fixture_path("full_soccar.json"))?;
+    let value = serde_json::to_value(&payload)?;
+
+    assert!(value.get("network_frames").is_none());
+    assert!(payload.analysis_target.is_none());
+    assert!(!payload.concede_windows.is_empty());
+    for window in &payload.concede_windows {
+        assert!(window.window_end >= window.window_start);
+        assert!(window.window_end - window.window_start <= 10.001);
+        if let Some(goal) = payload
+            .goals
+            .iter()
+            .find(|goal| goal.goal_index == window.goal_index)
+            .and_then(|goal| goal.time)
+        {
+            assert!(window.window_end <= goal);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn gemini_payload_can_focus_on_selected_player_without_losing_context() -> Result<()> {
+    let players = list_replay_players(&fixture_path("full_soccar.json"))?;
+    assert!(!players.is_empty());
+
+    let target = players[0].clone();
+    let payload =
+        build_gemini_match_payload_for_player(&fixture_path("full_soccar.json"), Some(&target))?;
+
+    assert_eq!(payload.analysis_target.as_ref(), Some(&target));
+    assert!(!payload.team_metrics.is_empty());
+    assert_eq!(payload.player_metrics.len(), players.len());
+    assert!(!payload.concede_windows.is_empty());
+    Ok(())
+}
+
+#[test]
+fn gemini_payload_rejects_missing_selected_player() {
+    let target = TimelinePlayer {
+        player_name: "MissingPlayer".to_string(),
+        team: 0,
+        unique_id: Some("missing-unique-id".to_string()),
+    };
+
+    let err =
+        build_gemini_match_payload_for_player(&fixture_path("full_soccar.json"), Some(&target))
+            .expect_err("missing target should fail");
+
+    assert!(err.to_string().contains("analysis target not found"));
+}
+
+#[test]
+fn gemini_payload_handles_header_only_replays() -> Result<()> {
+    let payload = build_gemini_match_payload(&fixture_path("header_only_soccar.json"))?;
+
+    assert_eq!(payload.availability.parse_quality, ParseQuality::HeaderOnly);
+    assert!(
+        payload
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("network frames unavailable"))
+    );
     Ok(())
 }

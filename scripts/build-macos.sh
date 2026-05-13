@@ -24,6 +24,7 @@ TARGET="${1:-$(detect_default_target)}"
 PROFILE_FLAG="${2:---release}"
 
 rustup target add "${TARGET}" >/dev/null
+"$(dirname "$0")/update-boxcars.sh"
 
 cargo build ${PROFILE_FLAG} \
   --target "${TARGET}" \

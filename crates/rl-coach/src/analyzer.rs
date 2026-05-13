@@ -6,8 +6,10 @@ use crate::input::{
 };
 use crate::report::{
     ANALYSIS_VERSION, AnalysisReport, AnalysisSource, Availability, BatchSummary, ConcedeDiagnosis,
-    DiagnosisEvidence, DiagnosisLabel, DiagnosisLabelReport, GoalReport, MatchManifest, MatchMeta,
-    MetricQuality, MetricValue, ParseQuality, PlayerMetricsReport, ScoreLine, TeamMetricsReport,
+    DiagnosisEvidence, DiagnosisLabel, DiagnosisLabelReport, GeminiConcedeWindow,
+    GeminiMatchPayload, GoalReport, MatchManifest, MatchMeta, MetricQuality, MetricValue,
+    ParseQuality, PlayerMetricsReport, PositionTimeline, PositionVec3, ScoreLine,
+    TeamMetricsReport, TimelineFrame, TimelinePlayer, TimelinePlayerFrame,
 };
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -18,6 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const GOAL_WINDOW_SECONDS: f64 = 10.0;
+const GEMINI_FRAME_STEP_SECONDS: f64 = 0.2;
 const SUPERSONIC_SPEED: f64 = 2200.0;
 const LOW_BOOST_THRESHOLD: f64 = 33.0;
 const PRESSURE_DISTANCE: f64 = 3500.0;
@@ -232,6 +235,18 @@ pub fn analyze_loaded_replay(path: &Path, replay: &ReplayInput) -> Result<Analys
     };
 
     let mut warnings = runtime.warnings.clone();
+    if let Some(metadata) = &replay.rl_toolkit {
+        warnings.extend(metadata.warnings.clone());
+        if metadata.network_parse_fallback {
+            let detail = metadata
+                .network_parse_error
+                .as_deref()
+                .unwrap_or("unknown network parse error");
+            warnings.push(format!(
+                "network parse failed; header-only fallback was used: {detail}"
+            ));
+        }
+    }
     if matches!(parse_quality, ParseQuality::Unsupported) {
         warnings.push("unsupported replay mode: only soccar is fully analyzed in v1".to_string());
     }
@@ -292,6 +307,233 @@ pub fn analyze_loaded_replay(path: &Path, replay: &ReplayInput) -> Result<Analys
         concede_diagnoses,
         warnings,
     })
+}
+
+pub fn build_position_timeline_file(path: &Path) -> Result<PositionTimeline> {
+    let replay = load_replay(path)?;
+    build_position_timeline_loaded(path, &replay)
+}
+
+pub fn write_position_timeline_file(
+    input_path: &Path,
+    output_path: &Path,
+    pretty: bool,
+) -> Result<PositionTimeline> {
+    let timeline = build_position_timeline_file(input_path)?;
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory {}", parent.display()))?;
+    }
+
+    let payload = if pretty {
+        serde_json::to_vec_pretty(&timeline).context("failed to serialize position timeline")?
+    } else {
+        serde_json::to_vec(&timeline).context("failed to serialize position timeline")?
+    };
+    fs::write(output_path, payload)
+        .with_context(|| format!("failed to write {}", output_path.display()))?;
+    Ok(timeline)
+}
+
+pub fn build_gemini_match_payload(path: &Path) -> Result<GeminiMatchPayload> {
+    build_gemini_match_payload_for_player(path, None)
+}
+
+pub fn build_gemini_match_payload_for_player(
+    path: &Path,
+    target: Option<&TimelinePlayer>,
+) -> Result<GeminiMatchPayload> {
+    let replay = load_replay(path)?;
+    let report = analyze_loaded_replay(path, &replay)?;
+    let runtime = runtime_from_replay(&replay, report.availability.parse_quality);
+    let concede_windows = build_gemini_concede_windows(&report.goals, &runtime);
+    let players = timeline_players_from_metrics(&report.player_metrics);
+    let analysis_target = match target {
+        Some(target) => Some(resolve_analysis_target(&players, target)?),
+        None => None,
+    };
+
+    Ok(GeminiMatchPayload {
+        payload_version: ANALYSIS_VERSION.to_string(),
+        match_summary: report.meta,
+        availability: report.availability,
+        analysis_target,
+        team_metrics: report.team_metrics,
+        player_metrics: report.player_metrics,
+        goals: report.goals,
+        concede_windows,
+        diagnosis_hints: report.concede_diagnoses,
+        warnings: report.warnings,
+    })
+}
+
+pub fn list_replay_players(path: &Path) -> Result<Vec<TimelinePlayer>> {
+    let replay = load_replay(path)?;
+    let report = analyze_loaded_replay(path, &replay)?;
+    Ok(timeline_players_from_metrics(&report.player_metrics))
+}
+
+fn build_position_timeline_loaded(path: &Path, replay: &ReplayInput) -> Result<PositionTimeline> {
+    let report = analyze_loaded_replay(path, replay)?;
+    let runtime = runtime_from_replay(replay, report.availability.parse_quality);
+    let players = timeline_players_from_metrics(&report.player_metrics);
+    let frames = runtime
+        .snapshots
+        .iter()
+        .map(|snapshot| timeline_frame_from_snapshot(snapshot, false))
+        .collect();
+
+    Ok(PositionTimeline {
+        timeline_version: ANALYSIS_VERSION.to_string(),
+        source: report.source,
+        meta: report.meta,
+        availability: report.availability,
+        players,
+        frames,
+        warnings: report.warnings,
+    })
+}
+
+fn timeline_players_from_metrics(player_metrics: &[PlayerMetricsReport]) -> Vec<TimelinePlayer> {
+    player_metrics
+        .iter()
+        .map(|player| TimelinePlayer {
+            player_name: player.player_name.clone(),
+            team: player.team,
+            unique_id: player.unique_id.clone(),
+        })
+        .collect()
+}
+
+fn resolve_analysis_target(
+    players: &[TimelinePlayer],
+    target: &TimelinePlayer,
+) -> Result<TimelinePlayer> {
+    if let Some(unique_id) = target
+        .unique_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(player) = players
+            .iter()
+            .find(|player| player.unique_id.as_deref() == Some(unique_id))
+        {
+            return Ok(player.clone());
+        }
+    }
+
+    players
+        .iter()
+        .find(|player| player.team == target.team && player.player_name == target.player_name)
+        .cloned()
+        .ok_or_else(|| {
+            anyhow!(
+                "analysis target not found in replay: {} [{}]",
+                target.player_name,
+                if target.team == 0 { "Blue" } else { "Orange" }
+            )
+        })
+}
+
+fn runtime_from_replay(replay: &ReplayInput, parse_quality: ParseQuality) -> MatchRuntime {
+    let mut runtime = MatchRuntime::default();
+    if matches!(parse_quality, ParseQuality::Full) {
+        build_runtime(replay, &mut runtime);
+    }
+    runtime
+}
+
+fn build_gemini_concede_windows(
+    goals: &[GoalReport],
+    runtime: &MatchRuntime,
+) -> Vec<GeminiConcedeWindow> {
+    goals
+        .iter()
+        .enumerate()
+        .filter_map(|(index, goal)| {
+            let goal_time = goal.time?;
+            let previous_goal_time = index
+                .checked_sub(1)
+                .and_then(|previous| goals.get(previous))
+                .and_then(|goal| goal.time);
+            let mut window_start = (goal_time - GOAL_WINDOW_SECONDS).max(0.0);
+            if let Some(previous_goal_time) = previous_goal_time {
+                window_start = window_start.max(previous_goal_time);
+            }
+            let window_end = goal_time;
+            let frames = sample_timeline_frames(&runtime.snapshots, window_start, window_end, true);
+
+            Some(GeminiConcedeWindow {
+                goal_index: goal.goal_index,
+                scoring_team: goal.scoring_team,
+                conceding_team: goal.conceding_team,
+                window_start: round2(window_start),
+                window_end: round2(window_end),
+                frames,
+            })
+        })
+        .collect()
+}
+
+fn sample_timeline_frames(
+    snapshots: &[FrameSnapshot],
+    window_start: f64,
+    window_end: f64,
+    round_values: bool,
+) -> Vec<TimelineFrame> {
+    let mut frames = Vec::new();
+    let mut next_time = window_start;
+
+    for snapshot in snapshots
+        .iter()
+        .filter(|snapshot| snapshot.time >= window_start && snapshot.time <= window_end)
+    {
+        if snapshot.time + 0.000_1 < next_time {
+            continue;
+        }
+        frames.push(timeline_frame_from_snapshot(snapshot, round_values));
+        next_time = snapshot.time + GEMINI_FRAME_STEP_SECONDS;
+    }
+
+    frames
+}
+
+fn timeline_frame_from_snapshot(snapshot: &FrameSnapshot, round_values: bool) -> TimelineFrame {
+    TimelineFrame {
+        time: maybe_round(snapshot.time, round_values),
+        ball_position: snapshot
+            .ball_position
+            .map(|position| position_vec3(position, round_values)),
+        players: snapshot
+            .players
+            .iter()
+            .map(|player| TimelinePlayerFrame {
+                player_name: player.name.clone(),
+                team: player.team,
+                position: player
+                    .position
+                    .map(|position| position_vec3(position, round_values)),
+                speed: player.speed.map(|speed| maybe_round(speed, round_values)),
+                boost: player.boost.map(|boost| maybe_round(boost, round_values)),
+            })
+            .collect(),
+    }
+}
+
+fn position_vec3(position: Vec3, round_values: bool) -> PositionVec3 {
+    PositionVec3 {
+        x: maybe_round(position.x, round_values),
+        y: maybe_round(position.y, round_values),
+        z: maybe_round(position.z, round_values),
+    }
+}
+
+fn maybe_round(value: f64, round_values: bool) -> f64 {
+    if round_values { round2(value) } else { value }
+}
+
+fn round2(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
 }
 
 fn determine_parse_quality(replay: &ReplayInput) -> ParseQuality {
@@ -1871,7 +2113,7 @@ fn collect_json_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
             if path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .map(|name| name == "analysis")
+                .map(|name| matches!(name, "analysis" | "timeline" | "gemini"))
                 .unwrap_or(false)
             {
                 continue;
@@ -1879,11 +2121,19 @@ fn collect_json_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
             collect_json_files(&path, files)?;
         } else if file_type.is_file()
             && path.extension().and_then(|ext| ext.to_str()) == Some("json")
+            && !is_position_timeline_file(&path)
         {
             files.push(path);
         }
     }
     Ok(())
+}
+
+fn is_position_timeline_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.ends_with(".positions.json"))
+        .unwrap_or(false)
 }
 
 pub fn report_output_path(

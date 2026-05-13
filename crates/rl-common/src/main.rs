@@ -8,10 +8,13 @@ use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, Messag
 use rl_coach::{
     AnalysisReport as CoachAnalysisReport, BatchSummary as CoachBatchSummary,
     DiagnosisLabel as CoachDiagnosisLabel, MetricValue as CoachMetricValue,
-    analyze_path as coach_analyze_path, load_reports as coach_load_reports,
+    TimelinePlayer as CoachTimelinePlayer, analyze_path as coach_analyze_path,
+    build_gemini_match_payload_for_player, list_replay_players, load_reports as coach_load_reports,
+    write_position_timeline_file,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -33,6 +36,7 @@ const UPDATE_GITHUB_TOKEN_ENV: &str = "RL_TOOLKIT_GITHUB_TOKEN";
 const GITHUB_TOKEN_ENV: &str = "GITHUB_TOKEN";
 const UPDATE_TIMEOUT_SECONDS: u64 = 5;
 const FONT_PATH_ENV: &str = "RL_TOOLKIT_FONT_PATH";
+const GEMINI_MAX_OUTPUT_TOKENS: u32 = 8192;
 
 fn main() -> eframe::Result<()> {
     configure_platform_env();
@@ -154,6 +158,7 @@ enum Tab {
     Harvester,
     Replay2Json,
     Coach,
+    Gemini,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,11 +236,40 @@ impl Default for CoachSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct GeminiSettings {
+    api_key: String,
+    input_path: String,
+    output_dir: String,
+    model: String,
+    selected_player_name: String,
+    selected_player_team: Option<u8>,
+    selected_player_unique_id: Option<String>,
+    culprit_investigation: bool,
+}
+
+impl Default for GeminiSettings {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            input_path: String::new(),
+            output_dir: String::new(),
+            model: "gemini-2.5-flash".to_string(),
+            selected_player_name: String::new(),
+            selected_player_team: None,
+            selected_player_unique_id: None,
+            culprit_investigation: false,
+        }
+    }
+}
+
 #[derive(Debug)]
 enum TaskKind {
     Harvester(HarvesterSettings),
     Replay2Json(Replay2JsonSettings),
     Coach(CoachSettings),
+    Gemini(GeminiSettings),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,6 +277,7 @@ enum RunningTask {
     Harvester,
     Replay2Json,
     Coach,
+    Gemini,
 }
 
 impl RunningTask {
@@ -251,6 +286,7 @@ impl RunningTask {
             TaskKind::Harvester(_) => Self::Harvester,
             TaskKind::Replay2Json(_) => Self::Replay2Json,
             TaskKind::Coach(_) => Self::Coach,
+            TaskKind::Gemini(_) => Self::Gemini,
         }
     }
 }
@@ -258,6 +294,10 @@ impl RunningTask {
 #[derive(Debug)]
 enum WorkerEvent {
     Log(String),
+    GeminiResult {
+        response_text: String,
+        output_path: PathBuf,
+    },
     Finished(Result<(), String>),
 }
 
@@ -267,7 +307,9 @@ struct RlGuiApp {
     harvester: HarvesterSettings,
     replay2json: Replay2JsonSettings,
     coach: CoachSettings,
+    gemini: GeminiSettings,
     coach_view: CoachViewState,
+    gemini_view: GeminiViewState,
     logs: Vec<String>,
     running: bool,
     worker_rx: Option<mpsc::Receiver<WorkerEvent>>,
@@ -281,6 +323,7 @@ struct SavedGuiSettings {
     harvester: HarvesterSettings,
     replay2json: Replay2JsonSettings,
     coach: CoachSettings,
+    gemini: GeminiSettings,
 }
 
 #[derive(Debug, Default)]
@@ -288,6 +331,15 @@ struct CoachViewState {
     summary: Option<CoachBatchSummary>,
     selected_match_index: usize,
     load_error: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct GeminiViewState {
+    latest_response: Option<String>,
+    latest_output_path: Option<PathBuf>,
+    players: Vec<CoachTimelinePlayer>,
+    players_input_path: String,
+    player_load_error: Option<String>,
 }
 
 impl Default for RlGuiApp {
@@ -302,7 +354,9 @@ impl Default for RlGuiApp {
             harvester: saved.harvester,
             replay2json: saved.replay2json,
             coach: saved.coach,
+            gemini: saved.gemini,
             coach_view: CoachViewState::default(),
+            gemini_view: GeminiViewState::default(),
             logs,
             running: false,
             worker_rx: None,
@@ -363,6 +417,7 @@ impl RlGuiApp {
                     run_replay2json_task(settings, &tx, &cancel_for_worker)
                 }
                 TaskKind::Coach(settings) => run_coach_task(settings, &tx, &cancel_for_worker),
+                TaskKind::Gemini(settings) => run_gemini_task(settings, &tx, &cancel_for_worker),
             };
 
             let _ = tx.send(WorkerEvent::Finished(result.map_err(|err| err.to_string())));
@@ -383,6 +438,13 @@ impl RlGuiApp {
             while let Ok(event) = rx.try_recv() {
                 match event {
                     WorkerEvent::Log(line) => self.logs.push(line),
+                    WorkerEvent::GeminiResult {
+                        response_text,
+                        output_path,
+                    } => {
+                        self.gemini_view.latest_response = Some(response_text);
+                        self.gemini_view.latest_output_path = Some(output_path);
+                    }
                     WorkerEvent::Finished(result) => {
                         let finished_task = self.active_task;
                         match result {
@@ -426,6 +488,7 @@ impl RlGuiApp {
             harvester: self.harvester.clone(),
             replay2json: self.replay2json.clone(),
             coach: self.coach.clone(),
+            gemini: self.gemini.clone(),
         };
         let _ = save_saved_settings(&settings);
     }
@@ -456,10 +519,90 @@ impl RlGuiApp {
             .get(self.coach_view.selected_match_index)
     }
 
+    fn refresh_gemini_players(&mut self) -> Result<()> {
+        let input_path = self.gemini.input_path.trim();
+        if input_path.is_empty() {
+            self.gemini_view.players.clear();
+            self.gemini_view.players_input_path.clear();
+            self.gemini_view.player_load_error = None;
+            self.gemini.selected_player_name.clear();
+            self.gemini.selected_player_team = None;
+            self.gemini.selected_player_unique_id = None;
+            return Ok(());
+        }
+
+        let input_path = to_absolute_path(Path::new(input_path))?;
+        if !input_path.is_file() {
+            return Err(anyhow!(
+                "replay JSON path is not a file: {}",
+                input_path.display()
+            ));
+        }
+
+        let players = list_replay_players(&input_path)?;
+        self.gemini_view.players = players;
+        self.gemini_view.players_input_path = input_path.display().to_string();
+        self.gemini_view.player_load_error = None;
+        self.ensure_gemini_player_selection();
+        Ok(())
+    }
+
+    fn ensure_gemini_player_selection(&mut self) {
+        let selected = self.selected_gemini_player_from_loaded();
+        if selected.is_some() {
+            return;
+        }
+
+        if let Some(first) = self.gemini_view.players.first().cloned() {
+            self.set_gemini_selected_player(&first);
+        } else {
+            self.gemini.selected_player_name.clear();
+            self.gemini.selected_player_team = None;
+            self.gemini.selected_player_unique_id = None;
+        }
+    }
+
+    fn set_gemini_selected_player(&mut self, player: &CoachTimelinePlayer) {
+        self.gemini.selected_player_name = player.player_name.clone();
+        self.gemini.selected_player_team = Some(player.team);
+        self.gemini.selected_player_unique_id = player.unique_id.clone();
+    }
+
+    fn selected_gemini_player_from_loaded(&self) -> Option<CoachTimelinePlayer> {
+        let selected_name = self.gemini.selected_player_name.as_str();
+        let selected_team = self.gemini.selected_player_team?;
+        if selected_name.is_empty() {
+            return None;
+        }
+
+        if let Some(unique_id) = self
+            .gemini
+            .selected_player_unique_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            if let Some(player) = self
+                .gemini_view
+                .players
+                .iter()
+                .find(|player| player.unique_id.as_deref() == Some(unique_id))
+            {
+                return Some(player.clone());
+            }
+        }
+
+        self.gemini_view
+            .players
+            .iter()
+            .find(|player| player.team == selected_team && player.player_name == selected_name)
+            .cloned()
+    }
+
     fn ui_header(&mut self, ui: &mut egui::Ui) {
         let tab_harvester = self.tr("Replay Harvester", "リプレイ収集");
         let tab_replay2json = self.tr("Replay2JSON", "リプレイJSON変換");
         let tab_coach = self.tr("RL Coach", "RL Coach");
+        let tab_gemini = self.tr("Gemini", "Gemini");
         let label_language = self.tr("Language", "言語");
         let button_stop = self.tr("Stop Task", "タスク停止");
         let label_idle = self.tr("Idle", "待機中");
@@ -469,6 +612,7 @@ impl RlGuiApp {
             ui.selectable_value(&mut self.tab, Tab::Harvester, tab_harvester);
             ui.selectable_value(&mut self.tab, Tab::Replay2Json, tab_replay2json);
             ui.selectable_value(&mut self.tab, Tab::Coach, tab_coach);
+            ui.selectable_value(&mut self.tab, Tab::Gemini, tab_gemini);
 
             ui.separator();
             ui.label(label_language);
@@ -862,6 +1006,164 @@ impl RlGuiApp {
         });
     }
 
+    fn ui_gemini(&mut self, ui: &mut egui::Ui) {
+        let heading = self.tr("Gemini Analysis", "Gemini分析");
+        let desc = self.tr(
+            "Send compact match statistics and pre-goal windows to Gemini.",
+            "試合統計と失点前10秒の圧縮データを Gemini に送って分析します。",
+        );
+        let label_api_key = self.tr("Gemini API Key", "Gemini APIキー");
+        let label_input_path = self.tr("Replay JSON File", "リプレイJSONファイル");
+        let label_output_dir = self.tr("Output Dir", "出力先ディレクトリ");
+        let label_model = self.tr("Model", "モデル");
+        let label_target = self.tr("Analysis Target", "分析対象選手");
+        let label_culprit = self.tr("Investigate Losing Player", "戦犯調査を行う");
+        let label_browse = self.tr("Browse...", "参照...");
+        let button_load_players = self.tr("Load Players", "選手読込");
+        let button_start = self.tr("Start Gemini Analysis", "Gemini分析開始");
+        let label_latest = self.tr("Latest Response", "最新の応答");
+        let label_no_players = self.tr(
+            "Load a replay JSON to choose a player.",
+            "リプレイJSONを読み込むと選手を選択できます。",
+        );
+        let mut settings_changed = false;
+        let mut input_path_changed = false;
+
+        ui.heading(heading);
+        ui.label(desc);
+
+        ui.horizontal(|ui| {
+            ui.label(label_api_key);
+            if ui
+                .add(egui::TextEdit::singleline(&mut self.gemini.api_key).password(true))
+                .changed()
+            {
+                settings_changed = true;
+            }
+        });
+        if ui_path_field(
+            ui,
+            label_input_path,
+            &mut self.gemini.input_path,
+            label_browse,
+            PathPicker::File,
+        ) {
+            settings_changed = true;
+            input_path_changed = true;
+        }
+        if ui_folder_field(
+            ui,
+            label_output_dir,
+            &mut self.gemini.output_dir,
+            label_browse,
+        ) {
+            settings_changed = true;
+        }
+        ui.horizontal(|ui| {
+            ui.label(label_model);
+            if ui.text_edit_singleline(&mut self.gemini.model).changed() {
+                settings_changed = true;
+            }
+        });
+        if ui
+            .checkbox(&mut self.gemini.culprit_investigation, label_culprit)
+            .changed()
+        {
+            settings_changed = true;
+        }
+
+        if input_path_changed {
+            let input_path = self.gemini.input_path.trim();
+            if Path::new(input_path).is_file() {
+                if let Err(err) = self.refresh_gemini_players() {
+                    self.gemini_view.player_load_error = Some(err.to_string());
+                }
+            } else {
+                self.gemini_view.players.clear();
+                self.gemini_view.players_input_path.clear();
+                self.gemini_view.player_load_error = None;
+            }
+        }
+
+        ui.horizontal(|ui| {
+            ui.label(label_target);
+            if ui
+                .add_enabled(!self.running, egui::Button::new(button_load_players))
+                .clicked()
+            {
+                match self.refresh_gemini_players() {
+                    Ok(()) => settings_changed = true,
+                    Err(err) => self.gemini_view.player_load_error = Some(err.to_string()),
+                }
+            }
+        });
+        if self.gemini_view.players.is_empty() {
+            ui.label(label_no_players);
+        } else {
+            let selected_text = self
+                .selected_gemini_player_from_loaded()
+                .as_ref()
+                .map(timeline_player_label)
+                .unwrap_or_else(|| label_no_players.to_string());
+            let players = self.gemini_view.players.clone();
+            egui::ComboBox::from_id_salt("gemini_player_select")
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    for player in &players {
+                        let label = timeline_player_label(player);
+                        let selected = self
+                            .selected_gemini_player_from_loaded()
+                            .as_ref()
+                            .map(|selected| same_timeline_player(selected, player))
+                            .unwrap_or(false);
+                        if ui.selectable_label(selected, label).clicked() {
+                            self.set_gemini_selected_player(player);
+                            settings_changed = true;
+                        }
+                    }
+                });
+        }
+        if let Some(err) = &self.gemini_view.player_load_error {
+            ui.label(format!(
+                "{}: {err}",
+                self.tr("Player load failed", "選手読込失敗")
+            ));
+        }
+
+        if settings_changed {
+            self.persist_settings();
+        }
+
+        if ui
+            .add_enabled(
+                !self.running && !self.gemini.selected_player_name.trim().is_empty(),
+                egui::Button::new(button_start),
+            )
+            .clicked()
+        {
+            self.start_task(TaskKind::Gemini(self.gemini.clone()));
+        }
+
+        ui.separator();
+        ui.heading(label_latest);
+        if let Some(path) = &self.gemini_view.latest_output_path {
+            ui.monospace(path.display().to_string());
+        }
+        if let Some(response) = &self.gemini_view.latest_response {
+            egui::ScrollArea::vertical()
+                .id_salt("gemini_response_scroll")
+                .max_height(360.0)
+                .show(ui, |ui| {
+                    ui.label(response);
+                });
+        } else {
+            ui.label(self.tr(
+                "Run Gemini Analysis to display the model response.",
+                "Gemini分析を実行するとモデル応答を表示します。",
+            ));
+        }
+    }
+
     fn ui_logs(&mut self, ui: &mut egui::Ui) {
         ui.separator();
         ui.heading(self.tr("Logs", "ログ"));
@@ -971,6 +1273,19 @@ fn format_match_record(matches: Option<usize>, wins: Option<usize>) -> String {
 
 fn team_name_label(team: u8) -> &'static str {
     if team == 0 { "Blue" } else { "Orange" }
+}
+
+fn timeline_player_label(player: &CoachTimelinePlayer) -> String {
+    format!("{} [{}]", player.player_name, team_name_label(player.team))
+}
+
+fn same_timeline_player(left: &CoachTimelinePlayer, right: &CoachTimelinePlayer) -> bool {
+    match (left.unique_id.as_deref(), right.unique_id.as_deref()) {
+        (Some(left_id), Some(right_id)) if !left_id.is_empty() && !right_id.is_empty() => {
+            left_id == right_id
+        }
+        _ => left.team == right.team && left.player_name == right.player_name,
+    }
 }
 
 fn team_name_label_for_language(team: u8, language: Language) -> &'static str {
@@ -1320,6 +1635,7 @@ impl eframe::App for RlGuiApp {
                 Tab::Harvester => self.ui_harvester(ui),
                 Tab::Replay2Json => self.ui_replay2json(ui),
                 Tab::Coach => self.ui_coach(ui),
+                Tab::Gemini => self.ui_gemini(ui),
             }
 
             self.ui_logs(ui);
@@ -1614,6 +1930,381 @@ fn run_coach_task(
     Ok(())
 }
 
+fn run_gemini_task(
+    settings: GeminiSettings,
+    tx: &mpsc::Sender<WorkerEvent>,
+    cancel: &AtomicBool,
+) -> Result<()> {
+    let api_key = settings.api_key.trim().to_string();
+    let input_path = PathBuf::from(settings.input_path.trim());
+    let output_dir = PathBuf::from(settings.output_dir.trim());
+    let model = normalize_gemini_model(&settings.model)?;
+
+    if api_key.is_empty() {
+        return Err(anyhow!("Gemini API key is required"));
+    }
+    if input_path.as_os_str().is_empty() {
+        return Err(anyhow!("replay JSON file is required"));
+    }
+    if output_dir.as_os_str().is_empty() {
+        return Err(anyhow!("output directory is required"));
+    }
+    let analysis_target = gemini_target_from_settings(&settings)?;
+    if cancel.load(Ordering::Relaxed) {
+        emit_log(tx, "gemini analysis cancelled");
+        return Ok(());
+    }
+
+    let input_path = to_absolute_path(&input_path)?;
+    if !input_path.is_file() {
+        return Err(anyhow!(
+            "replay JSON path is not a file: {}",
+            input_path.display()
+        ));
+    }
+    let output_dir = to_absolute_path(&output_dir)?;
+
+    emit_log(
+        tx,
+        format!(
+            "gemini analysis started: input={}, output={}, model={}",
+            input_path.display(),
+            output_dir.display(),
+            model
+        ),
+    );
+
+    let payload = build_gemini_match_payload_for_player(&input_path, Some(&analysis_target))?;
+    let request = build_gemini_request(&payload, settings.culprit_investigation)?;
+    if cancel.load(Ordering::Relaxed) {
+        emit_log(tx, "gemini analysis cancelled");
+        return Ok(());
+    }
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(120))
+        .user_agent("rl-common-gui/0.1.0")
+        .build()
+        .context("failed to build HTTP client")?;
+    let url =
+        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
+    let response = client
+        .post(url)
+        .header("x-goog-api-key", &api_key)
+        .json(&request)
+        .send()
+        .context("failed to call Gemini API")?;
+    let status = response.status();
+    let body = response
+        .text()
+        .context("failed to read Gemini API response body")?;
+    if !status.is_success() {
+        return Err(anyhow!("Gemini API returned {status}: {body}"));
+    }
+
+    let raw_response: serde_json::Value =
+        serde_json::from_str(&body).context("failed to parse Gemini API response JSON")?;
+    let parsed_response: GeminiGenerateResponse = serde_json::from_value(raw_response.clone())
+        .context("failed to decode Gemini API response")?;
+    let response_text = gemini_response_text(&parsed_response)
+        .filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| anyhow!("Gemini API response did not contain text"))?;
+    let finish_reasons = gemini_finish_reasons(&parsed_response);
+    if finish_reasons.iter().any(|reason| reason == "MAX_TOKENS") {
+        return Err(anyhow!(
+            "Gemini API response was truncated by max output tokens ({GEMINI_MAX_OUTPUT_TOKENS}); try a shorter prompt or raise GEMINI_MAX_OUTPUT_TOKENS"
+        ));
+    }
+
+    let json_output_path = output_dir
+        .join("gemini")
+        .join(&payload.match_summary.date)
+        .join(format!("{}.json", payload.match_summary.replay_id));
+    let html_output_path = output_dir
+        .join("gemini")
+        .join(&payload.match_summary.date)
+        .join(format!("{}.html", payload.match_summary.replay_id));
+    if let Some(parent) = json_output_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory {}", parent.display()))?;
+    }
+
+    let output = GeminiAnalysisOutput {
+        model: model.clone(),
+        replay_id: payload.match_summary.replay_id.clone(),
+        date: payload.match_summary.date.clone(),
+        analysis_target: payload.analysis_target.clone(),
+        culprit_investigation: settings.culprit_investigation,
+        response_text: response_text.clone(),
+        raw_response,
+        finish_reasons,
+        usage_metadata: parsed_response.usage_metadata,
+    };
+    let output_bytes =
+        serde_json::to_vec_pretty(&output).context("failed to serialize Gemini analysis output")?;
+    fs::write(&json_output_path, output_bytes)
+        .with_context(|| format!("failed to write {}", json_output_path.display()))?;
+
+    let html = build_gemini_report_html(
+        &model,
+        &payload.match_summary.replay_id,
+        &payload.match_summary.date,
+        &response_text,
+    );
+    fs::write(&html_output_path, html)
+        .with_context(|| format!("failed to write {}", html_output_path.display()))?;
+
+    emit_log(
+        tx,
+        format!("gemini analysis done: {}", html_output_path.display()),
+    );
+    let _ = tx.send(WorkerEvent::GeminiResult {
+        response_text,
+        output_path: html_output_path,
+    });
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiGenerateRequest {
+    contents: Vec<GeminiContent>,
+    generation_config: GeminiGenerationConfig,
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiContent {
+    role: String,
+    parts: Vec<GeminiPart>,
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiPart {
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiGenerationConfig {
+    temperature: f32,
+    max_output_tokens: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiGenerateResponse {
+    #[serde(default)]
+    candidates: Vec<GeminiCandidate>,
+    usage_metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiCandidate {
+    finish_reason: Option<String>,
+    content: Option<GeminiResponseContent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiResponseContent {
+    #[serde(default)]
+    parts: Vec<GeminiResponsePart>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiResponsePart {
+    text: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiAnalysisOutput {
+    model: String,
+    replay_id: String,
+    date: String,
+    analysis_target: Option<CoachTimelinePlayer>,
+    culprit_investigation: bool,
+    response_text: String,
+    raw_response: serde_json::Value,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    finish_reasons: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage_metadata: Option<serde_json::Value>,
+}
+
+fn gemini_target_from_settings(settings: &GeminiSettings) -> Result<CoachTimelinePlayer> {
+    let player_name = settings.selected_player_name.trim();
+    let team = settings
+        .selected_player_team
+        .ok_or_else(|| anyhow!("analysis target player is required"))?;
+    if player_name.is_empty() {
+        return Err(anyhow!("analysis target player is required"));
+    }
+
+    Ok(CoachTimelinePlayer {
+        player_name: player_name.to_string(),
+        team,
+        unique_id: settings.selected_player_unique_id.clone(),
+    })
+}
+
+fn normalize_gemini_model(model: &str) -> Result<String> {
+    let model = model.trim().trim_start_matches("models/").to_string();
+    if model.is_empty() {
+        return Err(anyhow!("Gemini model is required"));
+    }
+    if model.contains('/') {
+        return Err(anyhow!("Gemini model must not contain '/'"));
+    }
+    Ok(model)
+}
+
+fn build_gemini_request(
+    payload: &rl_coach::GeminiMatchPayload,
+    culprit_investigation: bool,
+) -> Result<GeminiGenerateRequest> {
+    Ok(GeminiGenerateRequest {
+        contents: vec![GeminiContent {
+            role: "user".to_string(),
+            parts: vec![GeminiPart {
+                text: build_gemini_prompt(payload, culprit_investigation)?,
+            }],
+        }],
+        generation_config: GeminiGenerationConfig {
+            temperature: 0.2,
+            max_output_tokens: GEMINI_MAX_OUTPUT_TOKENS,
+        },
+    })
+}
+
+fn build_gemini_prompt(
+    payload: &rl_coach::GeminiMatchPayload,
+    culprit_investigation: bool,
+) -> Result<String> {
+    let payload_json =
+        serde_json::to_string(payload).context("failed to serialize Gemini match payload")?;
+    let data_scope = if payload.availability.network_frames {
+        "データ状況: network frame は利用可能です。raw network_frames 全体は送っていませんが、失点前の位置/速度/boost は concede_windows.frames に network frame 由来の圧縮時系列として含まれています。「network frame データが利用できない」とは書かないでください。"
+    } else {
+        "データ状況: network frame は利用できません。concede_windows.frames が空または不足するため、詳細な動きやポジショニングは統計とヘッダー情報の範囲で慎重に推定してください。"
+    };
+    let target_scope = payload
+        .analysis_target
+        .as_ref()
+        .map(|target| {
+            format!(
+                "分析対象: {} [{}] を主対象にしてください。試合全体の文脈は維持しつつ、この選手の失点関与、改善点、優先練習メニューを優先してください。",
+                target.player_name,
+                team_name_label(target.team)
+            )
+        })
+        .unwrap_or_else(|| {
+            "分析対象: 特定選手の指定はありません。チーム全体を対象に分析してください。".to_string()
+        });
+    let culprit_scope = if culprit_investigation {
+        "戦犯調査: 実施してください。ここでの「戦犯」は負けた主因となった選手です。敗北チームの選手を対象に、シュート数、アシスト数、セーブ数だけでなく、失点前10秒の位置/速度/boost、ローテーションの乱れ、空振りやタッチ失敗の可能性、守備復帰、ダブルコミット、低boost守備、既存診断ヒントを総合して1人を特定してください。根拠が不足する場合は無理に断定せず「特定不能」とし、不足している根拠も書いてください。"
+    } else {
+        "戦犯調査: 実施しないでください。負けた原因を個人名で断定せず、通常の試合分析と改善点に集中してください。"
+    };
+    let output_headings = if culprit_investigation {
+        "出力は次の見出しで簡潔にまとめてください: 1. 試合概要 2. 失点原因 3. 改善点 4. 優先練習メニュー 5. 戦犯調査。"
+    } else {
+        "出力は次の見出しで簡潔にまとめてください: 1. 試合概要 2. 失点原因 3. 改善点 4. 優先練習メニュー。"
+    };
+    Ok(format!(
+        "あなたはRocket Leagueの戦術コーチです。以下のJSONだけを根拠に、試合の分析を日本語で返してください。\n\
+         {data_scope}\n\
+         {target_scope}\n\
+         {culprit_scope}\n\
+         raw replay全体は含まれていません。統計、失点前10秒の圧縮時系列、既存診断ヒントを優先してください。\n\
+         availability.network_frames が true の場合、圧縮時系列から読み取れる範囲で動きやポジショニングを分析してください。\n\
+         {output_headings}\n\n\
+         JSON:\n{payload_json}"
+    ))
+}
+
+fn gemini_response_text(response: &GeminiGenerateResponse) -> Option<String> {
+    let parts: Vec<_> = response
+        .candidates
+        .iter()
+        .filter_map(|candidate| candidate.content.as_ref())
+        .flat_map(|content| content.parts.iter())
+        .filter_map(|part| part.text.as_deref())
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n"))
+}
+
+fn gemini_finish_reasons(response: &GeminiGenerateResponse) -> Vec<String> {
+    response
+        .candidates
+        .iter()
+        .filter_map(|candidate| candidate.finish_reason.clone())
+        .collect()
+}
+
+fn build_gemini_report_html(
+    model: &str,
+    replay_id: &str,
+    date: &str,
+    response_text: &str,
+) -> String {
+    let title = format!("Gemini Report - {replay_id}");
+    format!(
+        "<!doctype html>\n\
+         <html lang=\"ja\">\n\
+         <head>\n\
+         <meta charset=\"utf-8\">\n\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+         <title>{title}</title>\n\
+         <style>\n\
+         :root {{ color-scheme: light dark; }}\n\
+         body {{ font-family: system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; margin: 0; line-height: 1.6; }}\n\
+         main {{ max-width: 960px; margin: 0 auto; padding: 32px 20px 48px; }}\n\
+         header {{ border-bottom: 1px solid #d0d7de; margin-bottom: 24px; padding-bottom: 16px; }}\n\
+         h1 {{ font-size: 1.8rem; margin: 0 0 8px; }}\n\
+         dl {{ display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }}\n\
+         dt {{ font-weight: 700; }}\n\
+         dd {{ margin: 0; }}\n\
+         article {{ white-space: pre-wrap; overflow-wrap: anywhere; }}\n\
+         </style>\n\
+         </head>\n\
+         <body>\n\
+         <main>\n\
+         <header>\n\
+         <h1>{title}</h1>\n\
+         <dl>\n\
+         <dt>Replay</dt><dd>{replay_id}</dd>\n\
+         <dt>Date</dt><dd>{date}</dd>\n\
+         <dt>Model</dt><dd>{model}</dd>\n\
+         </dl>\n\
+         </header>\n\
+         <article>{response_text}</article>\n\
+         </main>\n\
+         </body>\n\
+         </html>\n",
+        title = html_escape(&title),
+        replay_id = html_escape(replay_id),
+        date = html_escape(date),
+        model = html_escape(model),
+        response_text = html_escape(response_text),
+    )
+}
+
+fn html_escape(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
 #[derive(Debug)]
 struct ScanSummary {
     converted: usize,
@@ -1643,10 +2334,21 @@ fn scan_and_convert_replays(
         }
 
         match convert_replay_file(&replay_path, input_dir, output_dir, pretty_json) {
-            Ok(ConvertResult::Converted(path)) => {
+            Ok(ConvertResult::Converted {
+                path,
+                network_parse_error,
+            }) => {
                 converted += 1;
                 processed.insert(replay_path);
                 emit_log(tx, format!("converted {}", path.display()));
+                if let Some(err) = network_parse_error {
+                    emit_log(
+                        tx,
+                        format!(
+                            "warning: network parse failed; wrote header-only fallback JSON ({err})"
+                        ),
+                    );
+                }
             }
             Ok(ConvertResult::AlreadyExists(path)) => {
                 skipped += 1;
@@ -1669,7 +2371,10 @@ fn scan_and_convert_replays(
 
 #[derive(Debug)]
 enum ConvertResult {
-    Converted(PathBuf),
+    Converted {
+        path: PathBuf,
+        network_parse_error: Option<String>,
+    },
     AlreadyExists(PathBuf),
 }
 
@@ -1680,39 +2385,59 @@ fn convert_replay_file(
     pretty_json: bool,
 ) -> Result<ConvertResult> {
     let output_filename = json_filename_from_replay_path(replay_path)?;
+    let replay_id = replay_id_from_replay_path(replay_path)?;
     let date_segment = resolve_date_segment(replay_path, input_dir)?;
     let output_path = output_dir
         .join("json")
-        .join(date_segment)
+        .join(&date_segment)
         .join(output_filename);
+    let timeline_path = output_dir
+        .join("timeline")
+        .join(date_segment)
+        .join(format!("{replay_id}.positions.json"));
 
-    if output_path.exists() {
+    if output_path.exists() && timeline_path.exists() {
         return Ok(ConvertResult::AlreadyExists(output_path));
     }
 
-    let data = fs::read(replay_path)
-        .with_context(|| format!("failed to read replay file {}", replay_path.display()))?;
-    let replay = parse_replay(&data)
-        .with_context(|| format!("failed to parse replay file {}", replay_path.display()))?;
+    let mut network_parse_error = None;
+    if !output_path.exists() {
+        let data = fs::read(replay_path)
+            .with_context(|| format!("failed to read replay file {}", replay_path.display()))?;
+        let parsed = parse_replay(&data)
+            .with_context(|| format!("failed to parse replay file {}", replay_path.display()))?;
 
-    let json_bytes = if pretty_json {
-        serde_json::to_vec_pretty(&replay).context("failed to serialize replay to JSON")?
-    } else {
-        serde_json::to_vec(&replay).context("failed to serialize replay to JSON")?
-    };
+        let json_bytes = serialize_replay_json(&parsed, pretty_json)
+            .context("failed to serialize replay to JSON")?;
+        network_parse_error = parsed.network_parse_error.clone();
 
-    let parent = output_path.parent().ok_or_else(|| {
-        anyhow!(
-            "failed to resolve output directory for {}",
-            output_path.display()
-        )
-    })?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create output directory {}", parent.display()))?;
-    fs::write(&output_path, json_bytes)
-        .with_context(|| format!("failed to write json file {}", output_path.display()))?;
+        let parent = output_path.parent().ok_or_else(|| {
+            anyhow!(
+                "failed to resolve output directory for {}",
+                output_path.display()
+            )
+        })?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create output directory {}", parent.display()))?;
+        fs::write(&output_path, json_bytes)
+            .with_context(|| format!("failed to write json file {}", output_path.display()))?;
+    }
 
-    Ok(ConvertResult::Converted(output_path))
+    if !timeline_path.exists() {
+        write_position_timeline_file(&output_path, &timeline_path, pretty_json).with_context(
+            || {
+                format!(
+                    "failed to write position timeline {}",
+                    timeline_path.display()
+                )
+            },
+        )?;
+    }
+
+    Ok(ConvertResult::Converted {
+        path: output_path,
+        network_parse_error,
+    })
 }
 
 fn discover_replay_files(root: &Path) -> Result<Vec<PathBuf>> {
@@ -1750,6 +2475,10 @@ fn has_replay_extension(path: &Path) -> bool {
 }
 
 fn json_filename_from_replay_path(path: &Path) -> Result<String> {
+    Ok(format!("{}.json", replay_id_from_replay_path(path)?))
+}
+
+fn replay_id_from_replay_path(path: &Path) -> Result<String> {
     let stem = path
         .file_stem()
         .and_then(|x| x.to_str())
@@ -1759,7 +2488,7 @@ fn json_filename_from_replay_path(path: &Path) -> Result<String> {
         return Err(anyhow!("empty replay filename for {}", path.display()));
     }
 
-    Ok(format!("{stem}.json"))
+    Ok(stem.to_string())
 }
 
 fn resolve_date_segment(replay_path: &Path, input_dir: &Path) -> Result<String> {
@@ -1808,22 +2537,57 @@ fn is_ymd_segment(value: &str) -> bool {
             .all(|(index, ch)| index == 4 || index == 7 || ch.is_ascii_digit())
 }
 
-fn parse_replay(data: &[u8]) -> Result<boxcars::Replay> {
+#[derive(Debug)]
+struct ParsedReplay {
+    replay: boxcars::Replay,
+    network_parse_error: Option<String>,
+}
+
+fn parse_replay(data: &[u8]) -> Result<ParsedReplay> {
     match ParserBuilder::new(data)
         .with_network_parse(NetworkParse::Always)
         .on_error_check_crc()
         .parse()
     {
-        Ok(replay) => Ok(replay),
+        Ok(replay) => Ok(ParsedReplay {
+            replay,
+            network_parse_error: None,
+        }),
         Err(network_err) => ParserBuilder::new(data)
             .with_network_parse(NetworkParse::Never)
             .on_error_check_crc()
             .parse()
+            .map(|replay| ParsedReplay {
+                replay,
+                network_parse_error: Some(network_err.to_string()),
+            })
             .with_context(|| {
                 format!(
                     "network parse failed then fallback parse failed; first error: {network_err}"
                 )
             }),
+    }
+}
+
+fn serialize_replay_json(parsed: &ParsedReplay, pretty: bool) -> Result<Vec<u8>> {
+    let mut value =
+        serde_json::to_value(&parsed.replay).context("failed to serialize replay to JSON value")?;
+    if let Some(err) = &parsed.network_parse_error
+        && let Some(obj) = value.as_object_mut()
+    {
+        obj.insert(
+            "_rl_toolkit".to_string(),
+            json!({
+                "network_parse_fallback": true,
+                "network_parse_error": err
+            }),
+        );
+    }
+
+    if pretty {
+        serde_json::to_vec_pretty(&value).context("failed to serialize replay JSON")
+    } else {
+        serde_json::to_vec(&value).context("failed to serialize replay JSON")
     }
 }
 
@@ -2371,6 +3135,16 @@ mod tests {
                 output_dir: "/tmp/output".to_string(),
                 pretty_json: true,
             },
+            gemini: GeminiSettings {
+                api_key: "secret-key".to_string(),
+                input_path: "/tmp/replay.json".to_string(),
+                output_dir: "/tmp/gemini".to_string(),
+                model: "gemini-2.5-flash".to_string(),
+                selected_player_name: "BlueOne".to_string(),
+                selected_player_team: Some(0),
+                selected_player_unique_id: Some("blue-one-id".to_string()),
+                culprit_investigation: true,
+            },
         };
 
         let raw = serde_json::to_string(&settings).expect("serialize settings");
@@ -2380,6 +3154,15 @@ mod tests {
         assert_eq!(decoded.coach.input_path, "/tmp/input.json");
         assert_eq!(decoded.coach.output_dir, "/tmp/output");
         assert!(decoded.coach.pretty_json);
+        assert_eq!(decoded.gemini.api_key, "secret-key");
+        assert_eq!(decoded.gemini.model, "gemini-2.5-flash");
+        assert_eq!(decoded.gemini.selected_player_name, "BlueOne");
+        assert_eq!(decoded.gemini.selected_player_team, Some(0));
+        assert_eq!(
+            decoded.gemini.selected_player_unique_id.as_deref(),
+            Some("blue-one-id")
+        );
+        assert!(decoded.gemini.culprit_investigation);
     }
 
     #[test]
@@ -2388,6 +3171,145 @@ mod tests {
             RunningTask::from_task(&TaskKind::Coach(CoachSettings::default())),
             RunningTask::Coach
         );
+        assert_eq!(
+            RunningTask::from_task(&TaskKind::Gemini(GeminiSettings::default())),
+            RunningTask::Gemini
+        );
+    }
+
+    #[test]
+    fn gemini_request_contains_prompt_payload_without_api_key() {
+        let players = rl_coach::list_replay_players(&coach_fixture("full_soccar.json"))
+            .expect("replay players");
+        let target = players.first().expect("target player");
+        let payload = rl_coach::build_gemini_match_payload_for_player(
+            &coach_fixture("full_soccar.json"),
+            Some(target),
+        )
+        .expect("gemini payload");
+        let request = build_gemini_request(&payload, false).expect("gemini request");
+        let value = serde_json::to_value(&request).expect("request json");
+        let text = value["contents"][0]["parts"][0]["text"]
+            .as_str()
+            .expect("prompt text");
+        let max_output_tokens = value["generationConfig"]["maxOutputTokens"]
+            .as_u64()
+            .expect("max output tokens");
+
+        assert!(text.contains("Rocket League"));
+        assert!(text.contains("concede_windows"));
+        assert!(text.contains("network frame は利用可能"));
+        assert!(text.contains("network frame データが利用できない"));
+        assert!(text.contains(&target.player_name));
+        assert!(text.contains("主対象"));
+        assert!(text.contains("戦犯調査: 実施しない"));
+        assert_eq!(max_output_tokens, GEMINI_MAX_OUTPUT_TOKENS as u64);
+        assert!(!text.contains("secret-key"));
+    }
+
+    #[test]
+    fn gemini_prompt_can_request_culprit_investigation() {
+        let players = rl_coach::list_replay_players(&coach_fixture("full_soccar.json"))
+            .expect("replay players");
+        let target = players.first().expect("target player");
+        let payload = rl_coach::build_gemini_match_payload_for_player(
+            &coach_fixture("full_soccar.json"),
+            Some(target),
+        )
+        .expect("gemini payload");
+        let request = build_gemini_request(&payload, true).expect("gemini request");
+        let value = serde_json::to_value(&request).expect("request json");
+        let text = value["contents"][0]["parts"][0]["text"]
+            .as_str()
+            .expect("prompt text");
+
+        assert!(text.contains("戦犯調査: 実施してください"));
+        assert!(text.contains("負けた主因となった選手"));
+        assert!(text.contains("ローテーションの乱れ"));
+        assert!(text.contains("空振り"));
+        assert!(text.contains("5. 戦犯調査"));
+    }
+
+    #[test]
+    fn gemini_prompt_marks_header_only_frame_data_unavailable() {
+        let payload =
+            rl_coach::build_gemini_match_payload(&coach_fixture("header_only_soccar.json"))
+                .expect("gemini payload");
+        let request = build_gemini_request(&payload, false).expect("gemini request");
+        let value = serde_json::to_value(&request).expect("request json");
+        let text = value["contents"][0]["parts"][0]["text"]
+            .as_str()
+            .expect("prompt text");
+
+        assert!(text.contains("network frame は利用できません"));
+        assert!(text.contains("詳細な動きやポジショニング"));
+    }
+
+    #[test]
+    fn gemini_response_text_extracts_candidate_parts() {
+        let response: GeminiGenerateResponse = serde_json::from_str(
+            r#"{
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                { "text": "原因分析" },
+                                { "text": "改善点" }
+                            ]
+                        }
+                    }
+                ],
+                "usageMetadata": { "totalTokenCount": 42 }
+            }"#,
+        )
+        .expect("response json");
+
+        assert_eq!(
+            gemini_response_text(&response).as_deref(),
+            Some("原因分析\n改善点")
+        );
+        assert!(response.usage_metadata.is_some());
+    }
+
+    #[test]
+    fn gemini_finish_reasons_extracts_max_tokens() {
+        let response: GeminiGenerateResponse = serde_json::from_str(
+            r#"{
+                "candidates": [
+                    {
+                        "finishReason": "MAX_TOKENS",
+                        "content": {
+                            "parts": [
+                                { "text": "途中までの分析" }
+                            ]
+                        }
+                    }
+                ]
+            }"#,
+        )
+        .expect("response json");
+
+        assert_eq!(gemini_finish_reasons(&response), vec!["MAX_TOKENS"]);
+        assert_eq!(
+            gemini_response_text(&response).as_deref(),
+            Some("途中までの分析")
+        );
+    }
+
+    #[test]
+    fn gemini_report_html_escapes_response_text() {
+        let html = build_gemini_report_html(
+            "gemini-2.5-flash",
+            "abc123",
+            "2026-03-09",
+            "改善点\n<script>alert('x')</script>",
+        );
+
+        assert!(html.contains("<!doctype html>"));
+        assert!(html.contains("Gemini Report - abc123"));
+        assert!(html.contains("gemini-2.5-flash"));
+        assert!(html.contains("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"));
+        assert!(!html.contains("<script>alert"));
     }
 
     #[test]
