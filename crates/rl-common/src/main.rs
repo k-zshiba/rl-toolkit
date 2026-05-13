@@ -580,15 +580,13 @@ impl RlGuiApp {
             .selected_player_unique_id
             .as_deref()
             .filter(|value| !value.is_empty())
-        {
-            if let Some(player) = self
+            && let Some(player) = self
                 .gemini_view
                 .players
                 .iter()
                 .find(|player| player.unique_id.as_deref() == Some(unique_id))
-            {
-                return Some(player.clone());
-            }
+        {
+            return Some(player.clone());
         }
 
         self.gemini_view

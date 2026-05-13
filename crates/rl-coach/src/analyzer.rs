@@ -413,13 +413,11 @@ fn resolve_analysis_target(
         .unique_id
         .as_deref()
         .filter(|value| !value.is_empty())
-    {
-        if let Some(player) = players
+        && let Some(player) = players
             .iter()
             .find(|player| player.unique_id.as_deref() == Some(unique_id))
-        {
-            return Ok(player.clone());
-        }
+    {
+        return Ok(player.clone());
     }
 
     players
