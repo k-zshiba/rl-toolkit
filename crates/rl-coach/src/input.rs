@@ -19,6 +19,18 @@ pub struct ReplayInput {
     pub objects: Vec<String>,
     #[serde(default)]
     pub names: Vec<String>,
+    #[serde(default, rename = "_rl_toolkit")]
+    pub rl_toolkit: Option<RlToolkitMetadataInput>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RlToolkitMetadataInput {
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub network_parse_error: Option<String>,
+    #[serde(default)]
+    pub network_parse_fallback: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

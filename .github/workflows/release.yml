@@ -22,6 +22,9 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Update boxcars
+        run: ./scripts/update-boxcars.sh
+
       - name: Build
         run: cargo build --release -p rl-common -p rl-replay-harvester -p rl-replay2json
 
@@ -54,6 +57,10 @@ jobs:
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Update boxcars
+        shell: bash
+        run: ./scripts/update-boxcars.sh
 
       - name: Build
         run: cargo build --release -p rl-common -p rl-replay-harvester -p rl-replay2json
@@ -96,6 +103,9 @@ jobs:
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Update boxcars
+        run: ./scripts/update-boxcars.sh
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p rl-common -p rl-replay-harvester -p rl-replay2json

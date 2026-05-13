@@ -23,10 +23,15 @@ cargo run -p rl-common
   - `.replay` を JSON に変換
   - `Input Dir` / `Output Dir` は `Browse...` ボタンでフォルダ選択可能
   - 監視モードで追加ファイルを継続変換可能
+  - 選手・ボール位置の時系列 JSON も出力
 - RL Coach タブ
   - 単一 JSON またはディレクトリを入力可能
   - 出力先指定とビューア更新に対応
   - 全体集計、試合一覧、失点診断を GUI 上で閲覧可能
+- Gemini タブ
+  - Gemini API キー、リプレイ JSON、出力先、モデルを入力可能
+  - 試合統計と失点前10秒の圧縮データを Gemini に送信
+  - 応答を `gemini/{yyyy-mm-dd}/{replay_id}.html` に保存し、raw API 出力も `.json` に保存
 
 ### 補足
 
@@ -83,7 +88,14 @@ cargo run -p rl-replay2json -- \
 json/{yyyy-mm-dd}/{replay_filename}.json
 ```
 
+追加で、選手・ボール位置の時系列を以下に出力します。
+
+```text
+timeline/{yyyy-mm-dd}/{replay_filename}.positions.json
+```
+
 - 入力ディレクトリは再帰的に探索
+- timeline JSON には試合メタ、選手、フレーム時刻、ボール位置、選手の位置/速度/ブーストを含みます
 - 10 秒ごとに新規ファイルを検知して継続変換
 
 ## rl-coach (CLI)
@@ -153,6 +165,8 @@ analysis/summary.json
 
 ### スクリプト実行
 
+ビルドスクリプトはビルド前に `boxcars` を更新するため、リプレイ解析は crates.io の最新互換版に追従します。
+
 ```bash
 ./scripts/build-windows.sh
 ```
@@ -160,6 +174,7 @@ analysis/summary.json
 ### 直接実行
 
 ```bash
+./scripts/update-boxcars.sh
 cross build --release \
   --target x86_64-pc-windows-gnu \
   -p rl-common \
@@ -171,6 +186,8 @@ cross build --release \
 ## macOS 向けビルド
 
 ### スクリプト実行
+
+ビルドスクリプトはビルド前に `boxcars` を更新するため、リプレイ解析は crates.io の最新互換版に追従します。
 
 ```bash
 ./scripts/build-macos.sh
@@ -187,6 +204,7 @@ cross build --release \
 
 ```bash
 rustup target add aarch64-apple-darwin # または x86_64-apple-darwin
+./scripts/update-boxcars.sh
 cargo build --release \
   --target aarch64-apple-darwin \
   -p rl-common \

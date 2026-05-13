@@ -191,6 +191,77 @@ pub struct AnalysisReport {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct PositionVec3 {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TimelinePlayer {
+    pub player_name: String,
+    pub team: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unique_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TimelinePlayerFrame {
+    pub player_name: String,
+    pub team: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<PositionVec3>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boost: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TimelineFrame {
+    pub time: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ball_position: Option<PositionVec3>,
+    pub players: Vec<TimelinePlayerFrame>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PositionTimeline {
+    pub timeline_version: String,
+    pub source: AnalysisSource,
+    pub meta: MatchMeta,
+    pub availability: Availability,
+    pub players: Vec<TimelinePlayer>,
+    pub frames: Vec<TimelineFrame>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GeminiConcedeWindow {
+    pub goal_index: usize,
+    pub scoring_team: u8,
+    pub conceding_team: u8,
+    pub window_start: f64,
+    pub window_end: f64,
+    pub frames: Vec<TimelineFrame>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GeminiMatchPayload {
+    pub payload_version: String,
+    pub match_summary: MatchMeta,
+    pub availability: Availability,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub analysis_target: Option<TimelinePlayer>,
+    pub team_metrics: Vec<TeamMetricsReport>,
+    pub player_metrics: Vec<PlayerMetricsReport>,
+    pub goals: Vec<GoalReport>,
+    pub concede_windows: Vec<GeminiConcedeWindow>,
+    pub diagnosis_hints: Vec<ConcedeDiagnosis>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BatchSummary {
     pub analysis_version: String,

@@ -13,8 +13,15 @@ use std::path::{Path, PathBuf};
 
 pub use crate::report::{
     ANALYSIS_VERSION, AnalysisReport, Availability, BatchSummary, ConcedeDiagnosis,
-    DiagnosisEvidence, DiagnosisLabel, DiagnosisLabelReport, GoalReport, MatchManifest, MatchMeta,
-    MetricQuality, MetricValue, ParseQuality, PlayerMetricsReport, ScoreLine, TeamMetricsReport,
+    DiagnosisEvidence, DiagnosisLabel, DiagnosisLabelReport, GeminiConcedeWindow,
+    GeminiMatchPayload, GoalReport, MatchManifest, MatchMeta, MetricQuality, MetricValue,
+    ParseQuality, PlayerMetricsReport, PositionTimeline, PositionVec3, ScoreLine,
+    TeamMetricsReport, TimelineFrame, TimelinePlayer, TimelinePlayerFrame,
+};
+
+pub use crate::analyzer::{
+    build_gemini_match_payload, build_gemini_match_payload_for_player,
+    build_position_timeline_file, list_replay_players, write_position_timeline_file,
 };
 
 pub fn analyze_file(

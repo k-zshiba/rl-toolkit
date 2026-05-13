@@ -10,6 +10,8 @@ if ! command -v cross >/dev/null 2>&1; then
   exit 1
 fi
 
+"$(dirname "$0")/update-boxcars.sh"
+
 cross build ${PROFILE_FLAG} \
   --target "${TARGET}" \
   -p rl-common \

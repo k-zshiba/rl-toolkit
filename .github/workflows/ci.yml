@@ -22,6 +22,9 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Update boxcars
+        run: ./scripts/update-boxcars.sh
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -46,6 +49,10 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Update boxcars
+        shell: bash
+        run: ./scripts/update-boxcars.sh
+
       - name: Check workspace
         run: cargo check --workspace
 
@@ -66,6 +73,9 @@ jobs:
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Update boxcars
+        run: ./scripts/update-boxcars.sh
 
       - name: Check workspace
         run: cargo check --workspace

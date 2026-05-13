@@ -6,7 +6,7 @@ Japanese guide: [README.ja.md](./README.ja.md)
 
 ## rl-common (GUI)
 
-A desktop GUI application that provides both:
+A desktop GUI application that provides:
 - replay harvesting via ballchasing API
 - replay-to-json conversion via `boxcars`
 - replay JSON analysis via `rl-coach`
@@ -37,11 +37,16 @@ Notes:
   - `Browse...` buttons for input/output folder selection
   - one-shot conversion or watch mode
   - writes JSON to `json/{yyyy-mm-dd}/{replay_filename}.json`
+  - writes player/ball position timelines to `timeline/{yyyy-mm-dd}/{replay_filename}.positions.json`
 - RL Coach tab:
   - single JSON file or directory input
   - output directory input and analysis viewer refresh
   - batch aggregate, match list, and per-match diagnosis viewer
   - writes analysis to `analysis/{yyyy-mm-dd}/{replay_id}.json`
+- Gemini tab:
+  - Gemini API key / replay JSON file / output directory / model input
+  - sends compact match statistics and pre-goal windows to Gemini
+  - writes responses to `gemini/{yyyy-mm-dd}/{replay_id}.html` and raw API output to `.json`
 
 ## rl-replay-harvester
 
@@ -96,10 +101,15 @@ The output format is:
 
 `json/{yyyy-mm-dd}/{replay_filename}.json`
 
+The converter also writes a position timeline:
+
+`timeline/{yyyy-mm-dd}/{replay_filename}.positions.json`
+
 Notes:
 - the tool scans the input directory recursively
 - `yyyy-mm-dd` is extracted from ancestor directory names when available (fallback: file modified date in UTC)
 - output filename is the original replay filename with extension changed from `.replay` to `.json`
+- timeline JSON includes match metadata, players, frame times, ball positions, and player position/speed/boost samples
 - the process keeps running and polls every 10 seconds
 - only newly detected replay files are converted during runtime
 
@@ -169,6 +179,8 @@ Default endpoint:
 
 Build GUI and CLI binaries for Windows (`x86_64-pc-windows-gnu`) using `cross`:
 
+The build scripts update `boxcars` before building so replay parsing follows the latest compatible crates.io release.
+
 ```bash
 ./scripts/build-windows.sh
 ```
@@ -183,6 +195,7 @@ You can also specify target and profile:
 Direct command equivalent:
 
 ```bash
+./scripts/update-boxcars.sh
 cross build --release \
   --target x86_64-pc-windows-gnu \
   -p rl-common \
@@ -194,6 +207,8 @@ cross build --release \
 ## macOS Build
 
 Build GUI and CLI binaries on macOS:
+
+The build scripts update `boxcars` before building so replay parsing follows the latest compatible crates.io release.
 
 ```bash
 ./scripts/build-macos.sh
@@ -210,6 +225,7 @@ Direct command equivalent:
 
 ```bash
 rustup target add aarch64-apple-darwin # or x86_64-apple-darwin
+./scripts/update-boxcars.sh
 cargo build --release \
   --target aarch64-apple-darwin \
   -p rl-common \
